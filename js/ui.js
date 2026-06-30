@@ -26,13 +26,12 @@
   function catTag(cat, text) { return el('span', { class: 'tag ' + cat }, [text || G.CATEGORIES[cat].label]); }
 
   /* ---------- state --------------------------------------------- */
+  function defaultRoles() {
+    const r = {}; G.ASSIGNABLE_SLOTS.forEach(s => (r[s] = 'set'));
+    r['Cloak'] = 'free'; r['Ring1'] = 'free'; r['Ring2'] = 'legendary';
+    return r;
+  }
   function defaultState() {
-    const slotRoles = {};
-    G.ASSIGNABLE_SLOTS.forEach(s => (slotRoles[s] = 'set'));
-    slotRoles['Cloak'] = 'free';
-    slotRoles['Ring1'] = 'free';
-    slotRoles['Ring2'] = 'legendary';
-    const setOfSlot = {};   // you tag which slots belong to which set (cosmetic)
     return {
       bis: {
         requirements: [
@@ -47,16 +46,37 @@
           { category: 'gem', name: 'Amethyst', ranks: 2 },
           { category: 'stat', name: 'Haste', ranks: 2 }
         ],
-        slotRoles, setOfSlot,
-        sets: G.SEED_SETS.map(s => ({ name: s.name })),
         weaponTree: null   // null => auto
       },
+      loadouts: [{ name: 'Loadout 1', slotRoles: defaultRoles(), setOfSlot: {} }],
+      activeLoadout: 0,
+      sets: G.SEED_SETS.map(s => ({ name: s.name, dungeon: s.dungeon || null })),
+      dungeons: G.SEED_DUNGEONS.slice(),
+      slotDungeons: {},
       inventory: [],
       settings: { souldustOwned: 0 }
     };
   }
 
-  let state = load() || defaultState();
+  // upgrade older saved states (single config -> loadouts, sets -> dungeons)
+  function migrate(s) {
+    if (!s || !s.bis) return defaultState();
+    if (!Array.isArray(s.loadouts) || !s.loadouts.length) {
+      s.loadouts = [{ name: 'Loadout 1', slotRoles: (s.bis.slotRoles) || defaultRoles(), setOfSlot: s.bis.setOfSlot || {} }];
+    }
+    s.loadouts.forEach(L => { L.slotRoles = L.slotRoles || defaultRoles(); L.setOfSlot = L.setOfSlot || {}; });
+    if (s.activeLoadout == null || s.activeLoadout >= s.loadouts.length) s.activeLoadout = 0;
+    if (!Array.isArray(s.sets)) s.sets = (s.bis.sets || G.SEED_SETS).map(x => ({ name: x.name, dungeon: x.dungeon || null }));
+    s.sets.forEach(x => { if (x.dungeon === undefined) x.dungeon = null; });
+    if (!Array.isArray(s.dungeons) || !s.dungeons.length) s.dungeons = G.SEED_DUNGEONS.slice();
+    if (!s.slotDungeons) s.slotDungeons = {};
+    if (!s.settings) s.settings = { souldustOwned: 0 };
+    delete s.bis.slotRoles; delete s.bis.setOfSlot; delete s.bis.sets;
+    return s;
+  }
+
+  let state = migrate(load() || defaultState());
+  const lo = () => state.loadouts[state.activeLoadout] || state.loadouts[0];
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
   function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -71,80 +91,144 @@
   });
 
   /* ================= SETUP TAB ================= */
+  function dungeonChips(slot) {
+    const wrap = el('div', { class: 'kv' });
+    if (!(state.dungeons || []).length) { wrap.appendChild(el('span', { class: 'mini' }, ['add dungeons first'])); return wrap; }
+    state.dungeons.forEach(d => {
+      const on = (state.slotDungeons[slot] || []).includes(d);
+      wrap.appendChild(el('span', {
+        class: 'tag', style: 'cursor:pointer;' + (on ? 'background:rgba(122,162,247,.22);color:var(--accent2)' : 'background:var(--panel);color:var(--muted);border:1px solid var(--edge)'),
+        onclick: () => {
+          const arr = state.slotDungeons[slot] = state.slotDungeons[slot] || [];
+          const i = arr.indexOf(d); if (i >= 0) arr.splice(i, 1); else arr.push(d);
+          save(); renderSetup();
+        }
+      }, [d]));
+    });
+    return wrap;
+  }
+
+  function renderLoadoutBar() {
+    const bar = $('#loadoutBar'); clear(bar);
+    state.loadouts.forEach((L, i) => {
+      bar.appendChild(el('span', {
+        class: 'tag', style: 'cursor:pointer;margin-right:6px;padding:5px 12px;' +
+          (i === state.activeLoadout ? 'background:var(--accent);color:#1a1206' : 'background:var(--panel2);color:var(--txt);border:1px solid var(--edge)'),
+        onclick: () => { state.activeLoadout = i; save(); renderSetup(); }
+      }, [L.name || ('Loadout ' + (i + 1))]));
+    });
+    $('#activeLoadoutName').textContent = '· ' + (lo().name || '');
+  }
+
   function renderSetup() {
+    renderLoadoutBar();
+    const L = lo();
     // roles table
     const t = $('#rolesTable'); clear(t);
-    t.appendChild(el('tr', {}, [th('Slot'), th('Role'), th('Set / note')]));
+    t.appendChild(el('tr', {}, [th('Slot'), th('Role'), th('Set'), th('Drops from')]));
     G.SLOTS.forEach(slot => {
       const fixed = G.FIXED_ROLE[slot];
       const tr = el('tr');
       tr.appendChild(el('td', {}, [el('b', {}, [slot])]));
       if (fixed) {
-        tr.appendChild(el('td', {}, [el('span', { class: 'tag role' },
-          [fixed === 'weapon' ? 'Weapon (ability)' : 'Relic (ability)'])]));
-        tr.appendChild(el('td', {}, [el('span', { class: 'mini' }, ['1st mod fixed · 2 free mods + tree'])]));
+        tr.appendChild(el('td', {}, [el('span', { class: 'tag role' }, [fixed === 'weapon' ? 'Weapon' : 'Relic'])]));
+        tr.appendChild(el('td', { class: 'mini' }, ['ability slot']));
+        tr.appendChild(el('td', { class: 'mini' }, ['anywhere']));
       } else {
-        const sel = el('select', { onchange: e => { state.bis.slotRoles[slot] = e.target.value; save(); renderSetup(); renderPlanBudgetHints(); } });
-        ['set', 'free', 'legendary'].forEach(r => sel.appendChild(opt(r,
-          r === 'set' ? 'Set piece' : r === 'free' ? 'Free item' : 'Legendary',
-          state.bis.slotRoles[slot] === r)));
+        const role = L.slotRoles[slot] || 'set';
+        const sel = el('select', { onchange: e => { L.slotRoles[slot] = e.target.value; save(); renderSetup(); } });
+        ['set', 'free', 'legendary'].forEach(r => sel.appendChild(opt(r, r === 'set' ? 'Set piece' : r === 'free' ? 'Free item' : 'Legendary', role === r)));
         tr.appendChild(el('td', {}, [sel]));
-        // set assignment
-        let cell;
-        if (state.bis.slotRoles[slot] === 'set') {
-          const ss = el('select', { onchange: e => { state.bis.setOfSlot[slot] = e.target.value; save(); } });
-          ss.appendChild(opt('', '— set —', !state.bis.setOfSlot[slot]));
-          state.bis.sets.forEach(s => ss.appendChild(opt(s.name, s.name, state.bis.setOfSlot[slot] === s.name)));
-          cell = ss;
-        } else {
-          cell = el('span', { class: 'mini' }, [state.bis.slotRoles[slot] === 'free'
-            ? (slot === 'Necklace' ? '2 free mods + attunement' : '3 free mods (slot-3 = souldust target)')
-            : 'No modifier slots']);
-        }
-        tr.appendChild(el('td', {}, [cell]));
+        // set column
+        if (role === 'set') {
+          const ss = el('select', { onchange: e => { L.setOfSlot[slot] = e.target.value; save(); renderSetup(); } });
+          ss.appendChild(opt('', '— set —', !L.setOfSlot[slot]));
+          state.sets.forEach(s => ss.appendChild(opt(s.name, s.name, L.setOfSlot[slot] === s.name)));
+          tr.appendChild(el('td', {}, [ss]));
+        } else tr.appendChild(el('td', { class: 'mini' }, ['—']));
+        // dungeon column
+        if (role === 'set') {
+          const setName = L.setOfSlot[slot];
+          const set = state.sets.find(s => s.name === setName);
+          tr.appendChild(el('td', { class: 'mini' }, [set ? (set.dungeon || '⚠ set has no dungeon') : 'pick a set']));
+        } else if (role === 'free') {
+          tr.appendChild(el('td', {}, [dungeonChips(slot)]));
+        } else tr.appendChild(el('td', { class: 'mini' }, ['not worn']));
       }
       t.appendChild(tr);
     });
-    // validity
+    // validity (active loadout)
     const counts = { set: 0, free: 0, legendary: 0 };
-    G.ASSIGNABLE_SLOTS.forEach(s => counts[state.bis.slotRoles[s]]++);
+    G.ASSIGNABLE_SLOTS.forEach(s => counts[L.slotRoles[s] || 'set']++);
     const ok = counts.legendary === 1 && counts.free === 2 && counts.set === 8;
     const v = $('#roleValidity'); clear(v);
     v.appendChild(el('div', { class: 'banner ' + (ok ? 'ok' : 'bad') }, [
       ok ? '✔ Valid: 1 Legendary · 8 Set · 2 Free (+ Weapon & 2 Relics).'
-        : `⚠ You have ${counts.legendary} Legendary, ${counts.set} Set, ${counts.free} Free. Need 1 / 8 / 2.`
-    ]));
+        : `⚠ You have ${counts.legendary} Legendary, ${counts.set} Set, ${counts.free} Free. Need 1 / 8 / 2.`]));
 
-    // sets list
+    // sets list (name + dungeon)
     const sl = $('#setsList'); clear(sl);
-    state.bis.sets.forEach((s, i) => {
-      const slots = G.SLOTS.filter(x => state.bis.setOfSlot[x] === s.name);
-      sl.appendChild(el('span', { class: 'pill' }, [
-        el('b', {}, [s.name]),
-        el('span', { class: 'mini' }, [' ' + (slots.length ? slots.join(', ') : 'no slots')]),
-        el('button', { class: 'x', title: 'remove', onclick: () => {
-          state.bis.sets.splice(i, 1);
-          G.SLOTS.forEach(x => { if (state.bis.setOfSlot[x] === s.name) delete state.bis.setOfSlot[x]; });
+    state.sets.forEach((s, i) => {
+      const dSel = el('select', { onchange: e => { s.dungeon = e.target.value || null; save(); renderSetup(); } });
+      dSel.appendChild(opt('', '— dungeon —', !s.dungeon));
+      (state.dungeons || []).forEach(d => dSel.appendChild(opt(d, d, s.dungeon === d)));
+      sl.appendChild(el('div', { class: 'row', style: 'margin-bottom:6px;align-items:center' }, [
+        el('span', { class: 'pill', style: 'margin:0' }, [el('b', {}, [s.name])]),
+        dSel,
+        el('button', { class: 'danger sm', onclick: () => {
+          state.sets.splice(i, 1);
+          state.loadouts.forEach(L2 => G.SLOTS.forEach(x => { if (L2.setOfSlot[x] === s.name) delete L2.setOfSlot[x]; }));
           save(); renderSetup();
-        } }, ['×'])
+        } }, ['remove'])
       ]));
     });
-    const dl = $('#knownSets'); clear(dl);
-    G.KNOWN_SET_NAMES.forEach(n => dl.appendChild(opt(n)));
+    const knownDl = $('#knownSets'); clear(knownDl); G.KNOWN_SET_NAMES.forEach(n => knownDl.appendChild(opt(n)));
 
-    // weapon tree
+    // dungeons list
+    const dlb = $('#dungeonsList'); clear(dlb);
+    (state.dungeons || []).forEach((d, i) => dlb.appendChild(el('span', { class: 'pill' }, [
+      el('b', {}, [d]),
+      el('button', { class: 'x', title: 'remove', onclick: () => {
+        state.dungeons.splice(i, 1);
+        state.sets.forEach(s => { if (s.dungeon === d) s.dungeon = null; });
+        Object.keys(state.slotDungeons).forEach(k => { state.slotDungeons[k] = state.slotDungeons[k].filter(x => x !== d); });
+        save(); renderSetup();
+      } }, ['×'])
+    ])));
+
+    // weapon tree + assumptions
     $('#wtAuto').checked = !state.bis.weaponTree;
     renderWeaponTree();
-
-    // assumptions
     const a = $('#assumeBox'); clear(a);
     a.appendChild(el('div', { html:
       `Weapon tree = <b>+1 rank each</b> (1 major / 2 heroic / 2 defensive), off-budget &nbsp;·&nbsp; ` +
-      `Mark cost = <b>expected average</b> from roll odds &nbsp;·&nbsp; ` +
-      `Set necklace = <b>1 free mod</b> (set + attunement fixed) &nbsp;·&nbsp; ` +
-      `Total budget = <b>27 modifier slots</b>.` }));
+      `Mark cost = <b>expected average</b> &nbsp;·&nbsp; Souldust only on a free item's 3rd slot &nbsp;·&nbsp; ` +
+      `12 pair slots + 8 solo slots (3 gear + 5 weapon).` }));
   }
   function th(x) { return el('th', {}, [x]); }
+
+  /* ---- loadout & dungeon controls ---- */
+  $('#btnAddLoadout').addEventListener('click', () => {
+    state.loadouts.push({ name: 'Loadout ' + (state.loadouts.length + 1), slotRoles: defaultRoles(), setOfSlot: {} });
+    state.activeLoadout = state.loadouts.length - 1; save(); renderSetup();
+  });
+  $('#btnDupLoadout').addEventListener('click', () => {
+    const c = JSON.parse(JSON.stringify(lo())); c.name = (c.name || 'Loadout') + ' copy';
+    state.loadouts.push(c); state.activeLoadout = state.loadouts.length - 1; save(); renderSetup();
+  });
+  $('#btnRenameLoadout').addEventListener('click', () => {
+    const n = prompt('Loadout name:', lo().name || ''); if (n != null) { lo().name = n.trim() || lo().name; save(); renderSetup(); }
+  });
+  $('#btnDelLoadout').addEventListener('click', () => {
+    if (state.loadouts.length <= 1) { alert('Keep at least one loadout.'); return; }
+    if (!confirm('Delete loadout "' + (lo().name || '') + '"?')) return;
+    state.loadouts.splice(state.activeLoadout, 1); state.activeLoadout = 0; save(); renderSetup();
+  });
+  $('#btnAddDungeon').addEventListener('click', () => {
+    const n = $('#dungeonName').value.trim(); if (!n) return;
+    if (!state.dungeons.includes(n)) state.dungeons.push(n);
+    $('#dungeonName').value = ''; save(); renderSetup();
+  });
 
   function renderWeaponTree() {
     const box = $('#wtManual'); clear(box);
@@ -186,7 +270,7 @@
   });
   $('#btnAddSet').addEventListener('click', () => {
     const n = $('#setName').value.trim(); if (!n) return;
-    if (!state.bis.sets.some(s => s.name === n)) state.bis.sets.push({ name: n });
+    if (!state.sets.some(s => s.name === n)) state.sets.push({ name: n, dungeon: null });
     $('#setName').value = ''; save(); renderSetup();
   });
 
@@ -235,7 +319,7 @@
   }
 
   function renderBudget() {
-    const r = Engine.solve(state);
+    const r = Engine.solve(state, lo());
     const m = $('#budgetMeter'); m.classList.toggle('over', !r.feasible);
     m.firstChild.style.width = Math.min(100, r.pairSlotsNeeded / Math.max(1, r.capacity.pairSlots) * 100) + '%';
     const ds = r.soloPlacement.doubleSoloItems;
@@ -243,8 +327,31 @@
       `${r.pairSlotsNeeded} / ${r.capacity.pairSlots} duplicatable items · ${r.demand.soloTotal} solo mod(s)` +
       (ds ? ` · ${ds} natural 2-type drop(s) needed` : '') +
       (r.feasible ? '' : ' — OVER capacity!');
+    renderCapacity(r);
   }
   function renderPlanBudgetHints() { renderBudget(); }
+
+  function renderCapacity(r) {
+    const box = $('#capacityReadout'); clear(box);
+    const fc = r.freeCapacity;
+    const wtFree = [];
+    if (fc.weaponTree.major > 0) wtFree.push('1 major');
+    if (fc.weaponTree.heroic > 0) wtFree.push(fc.weaponTree.heroic + ' heroic');
+    if (fc.weaponTree.defensive > 0) wtFree.push(fc.weaponTree.defensive + ' defensive');
+    box.appendChild(el('div', { class: 'assume' }, [
+      el('b', {}, ['Spare capacity: ']),
+      fc.pairs > 0 ? `${fc.pairs} duplicatable slot(s) — each = 2× one mod of any type. ` : 'No pair slots left. ',
+      fc.gearSolos > 0 ? `${fc.gearSolos} gear solo slot(s) — 1 mod of any type. ` : 'No gear solo slots left. ',
+      wtFree.length ? `Weapon-tree room for: ${wtFree.join(', ')} (trait solos only).` : 'Weapon tree full.'
+    ]));
+    box.appendChild(el('div', { class: 'kv', style: 'margin-top:8px' }, [
+      el('span', { class: 'mini' }, ['Weapon tree currently: ']),
+      catTag('major', 'Major: ' + (r.weaponTree.major || '—')),
+      ...r.weaponTree.heroic.map(n => catTag('heroic', n)),
+      ...r.weaponTree.defensive.map(n => catTag('defensive', n)),
+      ...(r.weaponTree.heroic.length || r.weaponTree.defensive.length ? [] : [el('span', { class: 'mini' }, ['(no trait solos needed yet)'])])
+    ]));
+  }
 
   /* ================= INVENTORY TAB ================= */
   function renderInvForm() {
@@ -305,19 +412,45 @@
 
   function renderPlan() {
     const out = $('#planOut'); clear(out);
-    const r = Engine.solve(state);
-    const doneCount = r.ownedPlans.filter(p => p.done).length;
+    if (!state.loadouts.length) { out.appendChild(el('p', { class: 'mini' }, ['No loadouts — add one on the Setup tab.'])); return; }
+    out.appendChild(el('p', { class: 'hint' }, ['One plan per loadout — closest-to-finished on top. Each shows the 13-item loadout, your owned crafting steps, and which dungeons to farm for the missing bases.']));
+    const results = state.loadouts.map((L, idx) => { const r = Engine.solve(state, L); return { L, idx, r, dp: Engine.dungeonPlan(state, L, r) }; });
+    results.sort((a, b) => (b.r.feasible ? 1 : 0) - (a.r.feasible ? 1 : 0) || a.r.farmRows - b.r.farmRows || a.r.totals.marks - b.r.totals.marks);
+    results.forEach((x, rank) => {
+      const det = el('details', { class: 'panel', open: rank === 0 });
+      const sum = el('summary', { style: 'cursor:pointer' });
+      sum.appendChild(el('b', { style: 'font-size:16px' }, [x.L.name || ('Loadout ' + (x.idx + 1))]));
+      if (rank === 0 && results.length > 1) sum.appendChild(el('span', { class: 'tag', style: 'background:var(--accent);color:#1a1206;margin-left:8px' }, ['closest']));
+      sum.appendChild(el('span', { class: 'tag', style: 'margin-left:8px;' + (x.r.feasible ? 'background:rgba(63,185,80,.16);color:#7ee787' : 'background:rgba(248,81,73,.16);color:#ffa198') }, [x.r.feasible ? 'fits' : 'over capacity']));
+      sum.appendChild(el('span', { class: 'mini', style: 'margin-left:8px' }, [x.r.ownedRows + '/13 owned · ' + x.r.farmRows + ' to farm · ≈' + x.r.totals.marks + 'm' + (x.r.souldustNeed ? ' · ' + x.r.souldustOwned + '/' + x.r.souldustNeed + ' SD' : '')]));
+      det.appendChild(sum);
+      const body = el('div', { style: 'margin-top:12px' });
+      planSections(body, x.r);
+      dungeonSection(body, x.dp);
+      det.appendChild(body);
+      out.appendChild(det);
+    });
+  }
 
-    // banner
-    out.appendChild(el('div', { class: 'banner ' + (r.feasible ? 'ok' : 'bad') }, [
-      el('div', {}, [r.feasible
-        ? '✔ This BiS fits your gear capacity. Below: what to do with each item you own, then what is left to farm.'
-        : '⚠ This BiS does not fit your gear capacity yet — see below.']),
-      el('small', {}, [
-        `${r.pairSlotsNeeded}/${r.capacity.pairSlots} duplicatable items used · ${r.demand.soloTotal} solo mods · ` +
-        (r.soloPlacement.doubleSoloItems ? `${r.soloPlacement.doubleSoloItems} natural 2-type drop(s) · ` : '') +
-        `${r.ownedPlans.length} of your items usable`])
-    ]));
+  function dungeonSection(out, dp) {
+    const box = el('div', { class: 'panel', style: 'background:var(--panel2)' }, [el('h2', {}, ['Dungeons to farm'])]);
+    if (!dp.missingCount) { box.appendChild(el('div', { class: 'banner ok' }, ['✔ You own a base for every slot in this loadout.'])); out.appendChild(box); return; }
+    box.appendChild(el('p', { class: 'hint' }, ['Sorted by how many missing pieces each dungeon can supply — farm the top one first.']));
+    if (dp.ranked.length) {
+      const tb = el('table'); tb.appendChild(el('tr', {}, ['Dungeon', 'Pieces', 'Missing slots'].map(th)));
+      dp.ranked.forEach(d => tb.appendChild(el('tr', {}, [
+        el('td', {}, [el('b', {}, [d.dungeon])]),
+        el('td', {}, [String(d.slots.length)]),
+        el('td', { class: 'mini' }, [d.slots.join(', ')])])));
+      box.appendChild(tb);
+    }
+    if (dp.anywhere.length) box.appendChild(el('div', { class: 'assume', style: 'margin-top:8px' }, [el('b', {}, ['Anywhere: ']), 'Weapon/Relic bases (' + dp.anywhere.join(', ') + ') drop in any dungeon — grab while farming.']));
+    if (dp.unknown.length) box.appendChild(el('div', { class: 'assume', style: 'margin-top:8px' }, [el('b', {}, ['No dungeon set: ']), dp.unknown.join(', ') + ' — assign their set a dungeon, or list dungeons for the free slot, on the Setup tab.']));
+    out.appendChild(box);
+  }
+
+  function planSections(out, r) {
+    const doneCount = r.ownedPlans.filter(p => p.done).length;
     r.issues.forEach(i => out.appendChild(el('div', { class: 'banner bad' }, [i])));
 
     // stat cards

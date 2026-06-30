@@ -35,10 +35,10 @@
   const TRAIT_CATS = ['major', 'heroic', 'defensive'];
 
   /* ---------- capacity from slot roles --------------------------- */
-  function capacity(state) {
+  function capacity(loadout) {
     let nonNeckSets = 0, freeItems = 0, relics = 0, weapon = 0, legendary = 0, necklace = false;
     G.SLOTS.forEach(slot => {
-      const role = G.FIXED_ROLE[slot] || state.bis.slotRoles[slot] || 'set';
+      const role = roleOf(loadout, slot);
       if (slot === 'Weapon') weapon = 1;
       else if (role === 'relic') relics++;
       else if (role === 'legendary') legendary++;
@@ -171,9 +171,9 @@
   }
 
   /* ---------- owned-item matching (greedy cheapest) -------------- */
-  function roleOf(state, slot) { return G.FIXED_ROLE[slot] || state.bis.slotRoles[slot] || 'set'; }
+  function roleOf(loadout, slot) { return G.FIXED_ROLE[slot] || ((loadout && loadout.slotRoles) || {})[slot] || 'set'; }
 
-  function assess(state, demand, cap) {
+  function assess(state, loadout, demand, cap) {
     // mutable demand pools
     const pairPool = {};  Object.keys(demand.pairs).forEach(k => (pairPool[k] = demand.pairs[k]));
     const soloPool = {};  Object.keys(demand.solos).forEach(k => (soloPool[k] = demand.solos[k]));
@@ -183,7 +183,7 @@
     // candidate matches: {item, kind, key(s), cost}
     const cands = [];
     (state.inventory || []).forEach((item, idx) => {
-      const role = roleOf(state, item.slot);
+      const role = roleOf(loadout, item.slot);
       const m0 = item.mods[0], m1 = item.mods[1];
       if (role === 'free') {
         if (!m0) return;                              // need 1st mod to know its category
@@ -278,7 +278,7 @@
     // owned items that matched nothing -> drop / re-attempt
     (state.inventory || []).forEach((item, idx) => {
       if (usedItem.has(idx)) return;
-      const role = roleOf(state, item.slot);
+      const role = roleOf(loadout, item.slot);
       const m0 = item.mods[0];
       const where = role === 'free' ? '1st mod' : (item.slot === 'Necklace' ? '3rd mod' : '2nd slot');
       const revealAt = role === 'free' ? 'Rare' : (item.slot === 'Necklace' ? 'Regal' : 'Epic');
@@ -292,8 +292,9 @@
   }
 
   /* ---------- top-level solve ------------------------------------ */
-  function solve(state) {
-    const cap = capacity(state);
+  function solve(state, loadout) {
+    loadout = loadout || { slotRoles: (state.bis && state.bis.slotRoles) || {}, setOfSlot: (state.bis && state.bis.setOfSlot) || {} };
+    const cap = capacity(loadout);
     const demand = buildDemand(state);
     const pairTotal = Object.values(demand.pairs).reduce((a, b) => a + b, 0);
     const soloKeysAll = []; Object.keys(demand.solos).forEach(k => { for (let i = 0; i < demand.solos[k]; i++) soloKeysAll.push(k); });
@@ -303,7 +304,7 @@
     const issues = [];
     if (pairSlotsNeeded > cap.pairSlots) issues.push(`Needs ${pairSlotsNeeded} duplicatable/­double-solo items but only ${cap.pairSlots} exist (over budget by ${pairSlotsNeeded - cap.pairSlots}).`);
 
-    const { plans, pairPool, soloPool } = assess(state, demand, cap);
+    const { plans, pairPool, soloPool } = assess(state, loadout, demand, cap);
 
     // remaining demand after owned items
     const remPairs = Object.keys(pairPool).filter(k => pairPool[k] > 0).map(k => { const [category, name] = split(k); return { category, name, count: pairPool[k] }; });
@@ -346,13 +347,51 @@
     fillRows('Set piece', 'set', cap.nonNeckSets, false, false);
 
     const feasible = issues.length === 0;
+    const wt = demand.wt;
+    const gearSolosUsed = Math.min(soloKeysAll.length, cap.gearSolos);
+    const freeCapacity = {
+      pairs: Math.max(0, cap.pairSlots - pairSlotsNeeded),
+      gearSolos: Math.max(0, cap.gearSolos - gearSolosUsed),
+      weaponTree: { major: 1 - (wt.major ? 1 : 0), heroic: 2 - wt.heroic.length, defensive: 2 - wt.defensive.length }
+    };
     return {
-      feasible, issues, weaponTree: demand.wt, capacity: cap,
+      feasible, issues, weaponTree: wt, capacity: cap, loadout, freeCapacity,
       demand: { pairs: demand.pairs, solos: demand.solos, pairTotal, soloTotal: soloKeysAll.length },
       soloPlacement, pairSlotsNeeded, souldustOwned, souldustNeed,
       ownedPlans, drops, spares, totals, sheet,
+      farmRows: sheet.filter(x => x.source === 'farm').length,
+      ownedRows: sheet.filter(x => x.source === 'owned').length,
       remaining: { pairs: remPairs, solos: remSolos, doubleSoloItems: remSoloPlacement.doubleSoloItems, doubleSoloPairs: remSoloPlacement.doubleSoloPairs }
     };
+  }
+
+  /* ---------- dungeon farming plan (per loadout) ----------------- */
+  // Which physical gear slots still need a base, and from which dungeons,
+  // ranked by how many missing pieces a dungeon can supply.
+  function dungeonPlan(state, loadout, result) {
+    const setOfSlot = (loadout && loadout.setOfSlot) || {};
+    const setDungeon = {}; (state.sets || []).forEach(s => (setDungeon[s.name] = s.dungeon || null));
+    const slotDungeons = state.slotDungeons || {};
+    const covered = new Set(result.ownedPlans.map(p => p.slot));
+    const missing = [];                // {slot, role, dungeons:[...]|'anywhere'}
+    G.SLOTS.forEach(slot => {
+      const role = roleOf(loadout, slot);
+      if (role === 'legendary') return;            // always worn, not farmed
+      if (covered.has(slot)) return;
+      let dungeons;
+      if (role === 'weapon' || role === 'relic') dungeons = 'anywhere';
+      else if (role === 'set') { const d = setDungeon[setOfSlot[slot]]; dungeons = d ? [d] : []; }
+      else dungeons = (slotDungeons[slot] || []).slice();      // free / off-piece
+      missing.push({ slot, role, dungeons });
+    });
+    // rank dungeons by how many missing pieces they can supply
+    const counts = {};
+    missing.forEach(m => { if (Array.isArray(m.dungeons)) m.dungeons.forEach(d => (counts[d] = counts[d] || []).push(m.slot)); });
+    const ranked = Object.keys(counts).map(d => ({ dungeon: d, slots: counts[d] }))
+      .sort((a, b) => b.slots.length - a.slots.length || a.dungeon.localeCompare(b.dungeon));
+    const anywhere = missing.filter(m => m.dungeons === 'anywhere').map(m => m.slot);
+    const unknown = missing.filter(m => Array.isArray(m.dungeons) && !m.dungeons.length).map(m => m.slot);
+    return { missing, ranked, anywhere, unknown, missingCount: missing.length };
   }
 
   // Decision trees for free items that still need building (or owned ones).
@@ -384,5 +423,5 @@
     return out;
   }
 
-  global.Engine = { solve, buildDemand, freeItemTrees, capacity, weaponTree, marksToHitName };
+  global.Engine = { solve, buildDemand, freeItemTrees, capacity, weaponTree, marksToHitName, dungeonPlan, roleOf };
 })(typeof window !== 'undefined' ? window : globalThis);

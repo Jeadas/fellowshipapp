@@ -94,13 +94,15 @@
   // Names pulled from the user's planning sheet. Slots are a sensible
   // default the user can re-assign freely in the Setup tab.
   const SEED_SETS = [
-    { name: 'Draconic Might', slots: ['Head', 'Shoulders', 'Hands', 'Legs'] },
-    { name: 'Seal of Heskyr', slots: ['Chest', 'Feet', 'Necklace', 'Wrists'] }
+    { name: 'Draconic Might', dungeon: 'Drakheim' },
+    { name: 'Seal of Heskyr', dungeon: 'Sands' }
   ];
   const KNOWN_SET_NAMES = [
     'Draconic Might', 'Seal of Heskyr', 'Dark Prophecy', "Death's Grasp",
     'Drakheim', 'Scryer', 'Ruins', 'Sailor', 'Sands'
   ];
+  // Dungeons (where bases drop). User-editable; seeded from the planning sheet.
+  const SEED_DUNGEONS = ['Grove', 'Sands', 'Ruins', 'Urrak', 'Scryer', 'Sailors', 'Peak', 'Ransack'];
 
   /* ---- Modeling assumptions (surfaced in the UI) ----------------- */
   const ASSUMPTIONS = {
@@ -114,7 +116,7 @@
     CATEGORIES, CATEGORY_ORDER, POOLS, POOL_SIZE,
     SLOTS, FIXED_ROLE, ASSIGNABLE_SLOTS,
     RARITIES, RARITY_INDEX, modifierSlotsAt,
-    COST, SEED_SETS, KNOWN_SET_NAMES, ASSUMPTIONS,
+    COST, SEED_SETS, KNOWN_SET_NAMES, SEED_DUNGEONS, ASSUMPTIONS,
     categoryOf(name) {
       for (const c of CATEGORY_ORDER) if (POOLS[c].includes(name)) return c;
       return null;
