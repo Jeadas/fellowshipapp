@@ -94,8 +94,8 @@
   // Names pulled from the user's planning sheet. Slots are a sensible
   // default the user can re-assign freely in the Setup tab.
   const SEED_SETS = [
-    { name: 'Draconic Might', dungeon: 'Drakheim' },
-    { name: 'Seal of Heskyr', dungeon: 'Sands' }
+    { name: 'Draconic Might', dungeons: ['Grove'] },          // a set can span several dungeons
+    { name: 'Seal of Heskyr', dungeons: ['Sands', 'Ruins'] }  // small sets are spread over 2
   ];
   const KNOWN_SET_NAMES = [
     'Draconic Might', 'Seal of Heskyr', 'Dark Prophecy', "Death's Grasp",

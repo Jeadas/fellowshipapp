@@ -50,7 +50,7 @@
       },
       loadouts: [{ name: 'Loadout 1', slotRoles: defaultRoles(), setOfSlot: {} }],
       activeLoadout: 0,
-      sets: G.SEED_SETS.map(s => ({ name: s.name, dungeon: s.dungeon || null })),
+      sets: G.SEED_SETS.map(s => ({ name: s.name, dungeons: (s.dungeons || []).slice() })),
       dungeons: G.SEED_DUNGEONS.slice(),
       slotDungeons: {},
       inventory: [],
@@ -66,8 +66,8 @@
     }
     s.loadouts.forEach(L => { L.slotRoles = L.slotRoles || defaultRoles(); L.setOfSlot = L.setOfSlot || {}; });
     if (s.activeLoadout == null || s.activeLoadout >= s.loadouts.length) s.activeLoadout = 0;
-    if (!Array.isArray(s.sets)) s.sets = (s.bis.sets || G.SEED_SETS).map(x => ({ name: x.name, dungeon: x.dungeon || null }));
-    s.sets.forEach(x => { if (x.dungeon === undefined) x.dungeon = null; });
+    if (!Array.isArray(s.sets)) s.sets = (s.bis.sets || G.SEED_SETS).map(x => ({ name: x.name, dungeons: (x.dungeons || (x.dungeon ? [x.dungeon] : [])).slice() }));
+    s.sets.forEach(x => { if (!Array.isArray(x.dungeons)) x.dungeons = x.dungeon ? [x.dungeon] : []; delete x.dungeon; });
     if (!Array.isArray(s.dungeons) || !s.dungeons.length) s.dungeons = G.SEED_DUNGEONS.slice();
     if (!s.slotDungeons) s.slotDungeons = {};
     if (!s.settings) s.settings = { souldustOwned: 0 };
@@ -79,7 +79,12 @@
   const lo = () => state.loadouts[state.activeLoadout] || state.loadouts[0];
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
-  function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); }
+    catch (e) { /* private mode / quota — keep working in-memory this session */
+      const n = document.getElementById('saveWarn'); if (n) n.style.display = 'inline';
+    }
+  }
 
   /* ---------- tabs ---------------------------------------------- */
   $('#tabs').addEventListener('click', e => {
@@ -91,21 +96,24 @@
   });
 
   /* ================= SETUP TAB ================= */
-  function dungeonChips(slot) {
+  // Multi-select dungeon chips bound to an array; click toggles membership.
+  function dungeonToggleRow(selected, toggle) {
     const wrap = el('div', { class: 'kv' });
     if (!(state.dungeons || []).length) { wrap.appendChild(el('span', { class: 'mini' }, ['add dungeons first'])); return wrap; }
     state.dungeons.forEach(d => {
-      const on = (state.slotDungeons[slot] || []).includes(d);
+      const on = selected.includes(d);
       wrap.appendChild(el('span', {
         class: 'tag', style: 'cursor:pointer;' + (on ? 'background:rgba(122,162,247,.22);color:var(--accent2)' : 'background:var(--panel);color:var(--muted);border:1px solid var(--edge)'),
-        onclick: () => {
-          const arr = state.slotDungeons[slot] = state.slotDungeons[slot] || [];
-          const i = arr.indexOf(d); if (i >= 0) arr.splice(i, 1); else arr.push(d);
-          save(); renderSetup();
-        }
+        onclick: () => { toggle(d); save(); renderSetup(); }
       }, [d]));
     });
     return wrap;
+  }
+  function dungeonChips(slot) {
+    return dungeonToggleRow(state.slotDungeons[slot] || [], d => {
+      const arr = state.slotDungeons[slot] = state.slotDungeons[slot] || [];
+      const i = arr.indexOf(d); if (i >= 0) arr.splice(i, 1); else arr.push(d);
+    });
   }
 
   function renderLoadoutBar() {
@@ -148,9 +156,9 @@
         } else tr.appendChild(el('td', { class: 'mini' }, ['—']));
         // dungeon column
         if (role === 'set') {
-          const setName = L.setOfSlot[slot];
-          const set = state.sets.find(s => s.name === setName);
-          tr.appendChild(el('td', { class: 'mini' }, [set ? (set.dungeon || '⚠ set has no dungeon') : 'pick a set']));
+          const set = state.sets.find(s => s.name === L.setOfSlot[slot]);
+          const ds = set ? (set.dungeons || []) : null;
+          tr.appendChild(el('td', { class: 'mini' }, [set ? (ds.length ? ds.join(' / ') + ' (set)' : '⚠ set has no dungeon') : 'pick a set']));
         } else if (role === 'free') {
           tr.appendChild(el('td', {}, [dungeonChips(slot)]));
         } else tr.appendChild(el('td', { class: 'mini' }, ['not worn']));
@@ -166,20 +174,21 @@
       ok ? '✔ Valid: 1 Legendary · 8 Set · 2 Free (+ Weapon & 2 Relics).'
         : `⚠ You have ${counts.legendary} Legendary, ${counts.set} Set, ${counts.free} Free. Need 1 / 8 / 2.`]));
 
-    // sets list (name + dungeon)
+    // sets list (name + dungeon(s) — a set can span several dungeons)
     const sl = $('#setsList'); clear(sl);
     state.sets.forEach((s, i) => {
-      const dSel = el('select', { onchange: e => { s.dungeon = e.target.value || null; save(); renderSetup(); } });
-      dSel.appendChild(opt('', '— dungeon —', !s.dungeon));
-      (state.dungeons || []).forEach(d => dSel.appendChild(opt(d, d, s.dungeon === d)));
-      sl.appendChild(el('div', { class: 'row', style: 'margin-bottom:6px;align-items:center' }, [
-        el('span', { class: 'pill', style: 'margin:0' }, [el('b', {}, [s.name])]),
-        dSel,
-        el('button', { class: 'danger sm', onclick: () => {
-          state.sets.splice(i, 1);
-          state.loadouts.forEach(L2 => G.SLOTS.forEach(x => { if (L2.setOfSlot[x] === s.name) delete L2.setOfSlot[x]; }));
-          save(); renderSetup();
-        } }, ['remove'])
+      s.dungeons = s.dungeons || [];
+      sl.appendChild(el('div', { style: 'margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--edge)' }, [
+        el('div', { class: 'row', style: 'align-items:center;margin-bottom:4px' }, [
+          el('span', { class: 'pill', style: 'margin:0' }, [el('b', {}, [s.name])]),
+          el('span', { class: 'mini' }, ['drops in (pick all that apply):']),
+          el('button', { class: 'danger sm', onclick: () => {
+            state.sets.splice(i, 1);
+            state.loadouts.forEach(L2 => G.SLOTS.forEach(x => { if (L2.setOfSlot[x] === s.name) delete L2.setOfSlot[x]; }));
+            save(); renderSetup();
+          } }, ['remove'])
+        ]),
+        dungeonToggleRow(s.dungeons, d => { const a = s.dungeons; const k = a.indexOf(d); if (k >= 0) a.splice(k, 1); else a.push(d); })
       ]));
     });
     const knownDl = $('#knownSets'); clear(knownDl); G.KNOWN_SET_NAMES.forEach(n => knownDl.appendChild(opt(n)));

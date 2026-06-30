@@ -370,7 +370,7 @@
   // ranked by how many missing pieces a dungeon can supply.
   function dungeonPlan(state, loadout, result) {
     const setOfSlot = (loadout && loadout.setOfSlot) || {};
-    const setDungeon = {}; (state.sets || []).forEach(s => (setDungeon[s.name] = s.dungeon || null));
+    const setDungeons = {}; (state.sets || []).forEach(s => (setDungeons[s.name] = (s.dungeons || (s.dungeon ? [s.dungeon] : [])).slice()));
     const slotDungeons = state.slotDungeons || {};
     const covered = new Set(result.ownedPlans.map(p => p.slot));
     const missing = [];                // {slot, role, dungeons:[...]|'anywhere'}
@@ -380,7 +380,7 @@
       if (covered.has(slot)) return;
       let dungeons;
       if (role === 'weapon' || role === 'relic') dungeons = 'anywhere';
-      else if (role === 'set') { const d = setDungeon[setOfSlot[slot]]; dungeons = d ? [d] : []; }
+      else if (role === 'set') dungeons = (setDungeons[setOfSlot[slot]] || []).slice();
       else dungeons = (slotDungeons[slot] || []).slice();      // free / off-piece
       missing.push({ slot, role, dungeons });
     });
