@@ -369,19 +369,15 @@
   // Which physical gear slots still need a base, and from which dungeons,
   // ranked by how many missing pieces a dungeon can supply.
   function dungeonPlan(state, loadout, result) {
-    const setOfSlot = (loadout && loadout.setOfSlot) || {};
-    const setDungeons = {}; (state.sets || []).forEach(s => (setDungeons[s.name] = (s.dungeons || (s.dungeon ? [s.dungeon] : [])).slice()));
-    const slotDungeons = state.slotDungeons || {};
+    const slotDungeons = (loadout && loadout.slotDungeons) || {};
     const covered = new Set(result.ownedPlans.map(p => p.slot));
     const missing = [];                // {slot, role, dungeons:[...]|'anywhere'}
     G.SLOTS.forEach(slot => {
       const role = roleOf(loadout, slot);
       if (role === 'legendary') return;            // always worn, not farmed
       if (covered.has(slot)) return;
-      let dungeons;
-      if (role === 'weapon' || role === 'relic') dungeons = 'anywhere';
-      else if (role === 'set') dungeons = (setDungeons[setOfSlot[slot]] || []).slice();
-      else dungeons = (slotDungeons[slot] || []).slice();      // free / off-piece
+      // dungeon source is set per-slot in the loadout (set & free pieces alike)
+      const dungeons = (role === 'weapon' || role === 'relic') ? 'anywhere' : (slotDungeons[slot] || []).slice();
       missing.push({ slot, role, dungeons });
     });
     // rank dungeons by how many missing pieces they can supply

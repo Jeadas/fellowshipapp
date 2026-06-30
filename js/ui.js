@@ -48,11 +48,12 @@
         ],
         weaponTree: null   // null => auto
       },
-      loadouts: [{ name: 'Loadout 1', slotRoles: defaultRoles(), setOfSlot: {} }],
+      loadouts: [{ name: 'Loadout 1', slotRoles: defaultRoles(),
+        setOfSlot: { Head: 'Draconic Might', Shoulders: 'Draconic Might', Hands: 'Draconic Might', Legs: 'Draconic Might', Chest: 'Seal of Heskyr', Feet: 'Seal of Heskyr', Necklace: 'Seal of Heskyr', Wrists: 'Seal of Heskyr' },
+        slotDungeons: { Head: ['Grove'], Shoulders: ['Grove'], Hands: ['Grove'], Legs: ['Grove'], Chest: ['Sands'], Feet: ['Sands'], Necklace: ['Ruins'], Wrists: ['Ruins'], Cloak: ['Grove', 'Urrak'], Ring1: ['Grove'] } }],
       activeLoadout: 0,
-      sets: G.SEED_SETS.map(s => ({ name: s.name, dungeons: (s.dungeons || []).slice() })),
+      sets: G.SEED_SETS.map(s => ({ name: s.name })),
       dungeons: G.SEED_DUNGEONS.slice(),
-      slotDungeons: {},
       inventory: [],
       settings: { souldustOwned: 0 }
     };
@@ -66,10 +67,21 @@
     }
     s.loadouts.forEach(L => { L.slotRoles = L.slotRoles || defaultRoles(); L.setOfSlot = L.setOfSlot || {}; });
     if (s.activeLoadout == null || s.activeLoadout >= s.loadouts.length) s.activeLoadout = 0;
-    if (!Array.isArray(s.sets)) s.sets = (s.bis.sets || G.SEED_SETS).map(x => ({ name: x.name, dungeons: (x.dungeons || (x.dungeon ? [x.dungeon] : [])).slice() }));
-    s.sets.forEach(x => { if (!Array.isArray(x.dungeons)) x.dungeons = x.dungeon ? [x.dungeon] : []; delete x.dungeon; });
+    if (!Array.isArray(s.sets)) s.sets = (s.bis.sets || G.SEED_SETS).map(x => ({ name: x.name }));
     if (!Array.isArray(s.dungeons) || !s.dungeons.length) s.dungeons = G.SEED_DUNGEONS.slice();
-    if (!s.slotDungeons) s.slotDungeons = {};
+    // dungeon sources now live per-slot IN each loadout; seed from old set/global data
+    const oldSetDungeons = {}; (s.sets || []).forEach(x => { const d = x.dungeons || (x.dungeon ? [x.dungeon] : []); if (d.length) oldSetDungeons[x.name] = d; });
+    s.loadouts.forEach(L => {
+      L.slotDungeons = L.slotDungeons || {};
+      G.SLOTS.forEach(slot => {
+        if (L.slotDungeons[slot]) return;
+        const role = G.FIXED_ROLE[slot] || L.slotRoles[slot] || 'set';
+        if (role === 'free' && s.slotDungeons && s.slotDungeons[slot]) L.slotDungeons[slot] = s.slotDungeons[slot].slice();
+        else if (role === 'set' && oldSetDungeons[L.setOfSlot[slot]]) L.slotDungeons[slot] = oldSetDungeons[L.setOfSlot[slot]].slice();
+      });
+    });
+    s.sets.forEach(x => { delete x.dungeons; delete x.dungeon; });
+    delete s.slotDungeons;
     if (!s.settings) s.settings = { souldustOwned: 0 };
     delete s.bis.slotRoles; delete s.bis.setOfSlot; delete s.bis.sets;
     return s;
@@ -110,8 +122,9 @@
     return wrap;
   }
   function dungeonChips(slot) {
-    return dungeonToggleRow(state.slotDungeons[slot] || [], d => {
-      const arr = state.slotDungeons[slot] = state.slotDungeons[slot] || [];
+    const L = lo(); L.slotDungeons = L.slotDungeons || {};
+    return dungeonToggleRow(L.slotDungeons[slot] || [], d => {
+      const arr = L.slotDungeons[slot] = L.slotDungeons[slot] || [];
       const i = arr.indexOf(d); if (i >= 0) arr.splice(i, 1); else arr.push(d);
     });
   }
@@ -154,14 +167,9 @@
           state.sets.forEach(s => ss.appendChild(opt(s.name, s.name, L.setOfSlot[slot] === s.name)));
           tr.appendChild(el('td', {}, [ss]));
         } else tr.appendChild(el('td', { class: 'mini' }, ['—']));
-        // dungeon column
-        if (role === 'set') {
-          const set = state.sets.find(s => s.name === L.setOfSlot[slot]);
-          const ds = set ? (set.dungeons || []) : null;
-          tr.appendChild(el('td', { class: 'mini' }, [set ? (ds.length ? ds.join(' / ') + ' (set)' : '⚠ set has no dungeon') : 'pick a set']));
-        } else if (role === 'free') {
-          tr.appendChild(el('td', {}, [dungeonChips(slot)]));
-        } else tr.appendChild(el('td', { class: 'mini' }, ['not worn']));
+        // dungeon column — set & free pieces both pick their dungeon(s) here
+        if (role === 'set' || role === 'free') tr.appendChild(el('td', {}, [dungeonChips(slot)]));
+        else tr.appendChild(el('td', { class: 'mini' }, ['not worn']));
       }
       t.appendChild(tr);
     });
@@ -174,21 +182,16 @@
       ok ? '✔ Valid: 1 Legendary · 8 Set · 2 Free (+ Weapon & 2 Relics).'
         : `⚠ You have ${counts.legendary} Legendary, ${counts.set} Set, ${counts.free} Free. Need 1 / 8 / 2.`]));
 
-    // sets list (name + dungeon(s) — a set can span several dungeons)
+    // sets list (just names — dungeon source is per-slot in the loadout)
     const sl = $('#setsList'); clear(sl);
     state.sets.forEach((s, i) => {
-      s.dungeons = s.dungeons || [];
-      sl.appendChild(el('div', { style: 'margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--edge)' }, [
-        el('div', { class: 'row', style: 'align-items:center;margin-bottom:4px' }, [
-          el('span', { class: 'pill', style: 'margin:0' }, [el('b', {}, [s.name])]),
-          el('span', { class: 'mini' }, ['drops in (pick all that apply):']),
-          el('button', { class: 'danger sm', onclick: () => {
-            state.sets.splice(i, 1);
-            state.loadouts.forEach(L2 => G.SLOTS.forEach(x => { if (L2.setOfSlot[x] === s.name) delete L2.setOfSlot[x]; }));
-            save(); renderSetup();
-          } }, ['remove'])
-        ]),
-        dungeonToggleRow(s.dungeons, d => { const a = s.dungeons; const k = a.indexOf(d); if (k >= 0) a.splice(k, 1); else a.push(d); })
+      sl.appendChild(el('div', { class: 'row', style: 'align-items:center;margin-bottom:6px' }, [
+        el('span', { class: 'pill', style: 'margin:0' }, [el('b', {}, [s.name])]),
+        el('button', { class: 'danger sm', onclick: () => {
+          state.sets.splice(i, 1);
+          state.loadouts.forEach(L2 => G.SLOTS.forEach(x => { if (L2.setOfSlot[x] === s.name) delete L2.setOfSlot[x]; }));
+          save(); renderSetup();
+        } }, ['remove'])
       ]));
     });
     const knownDl = $('#knownSets'); clear(knownDl); G.KNOWN_SET_NAMES.forEach(n => knownDl.appendChild(opt(n)));
@@ -199,8 +202,7 @@
       el('b', {}, [d]),
       el('button', { class: 'x', title: 'remove', onclick: () => {
         state.dungeons.splice(i, 1);
-        state.sets.forEach(s => { if (s.dungeon === d) s.dungeon = null; });
-        Object.keys(state.slotDungeons).forEach(k => { state.slotDungeons[k] = state.slotDungeons[k].filter(x => x !== d); });
+        state.loadouts.forEach(L2 => Object.keys(L2.slotDungeons || {}).forEach(k => { L2.slotDungeons[k] = (L2.slotDungeons[k] || []).filter(x => x !== d); }));
         save(); renderSetup();
       } }, ['×'])
     ])));

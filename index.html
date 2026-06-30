@@ -46,8 +46,8 @@
     <div class="panel">
       <h2>Slot roles &amp; dungeon sources <span class="mini" id="activeLoadoutName"></span></h2>
       <p class="hint">For the active loadout: Weapon &amp; both Relics are fixed (drop anywhere). Of the other 11,
-        assign exactly <b>1 Legendary</b>, <b>8 Set pieces</b>, <b>2 Free</b>. Set pieces drop from their set's dungeon;
-        free off-pieces can list several viable dungeons (you're just after good base stats there).</p>
+        assign exactly <b>1 Legendary</b>, <b>8 Set pieces</b>, <b>2 Free</b>. In <b>Drops from</b>, toggle the dungeon(s)
+        each Set or Free piece can drop from (set per slot, right here — pick several if it can come from more than one).</p>
       <div id="roleValidity"></div>
       <table id="rolesTable"></table>
     </div>
@@ -55,7 +55,8 @@
     <div class="grid2">
       <div class="panel">
         <h2>Sets</h2>
-        <p class="hint">Name each set and the dungeon it drops from. Sets are shared across all loadouts.</p>
+        <p class="hint">Just the set names (the set bonus those pieces carry). The dungeon each piece drops from is
+          set per slot in the loadout above.</p>
         <div class="row">
           <div class="field"><label>New set name</label>
             <input id="setName" list="knownSets" placeholder="e.g. Draconic Might"></div>
