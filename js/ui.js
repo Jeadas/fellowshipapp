@@ -333,7 +333,7 @@
     const r = Engine.solve(state, lo());
     const m = $('#budgetMeter'); m.classList.toggle('over', !r.feasible);
     m.firstChild.style.width = Math.min(100, r.pairSlotsNeeded / Math.max(1, r.capacity.pairSlots) * 100) + '%';
-    const ds = r.soloPlacement.doubleSoloItems;
+    const ds = r.remaining.doubleSoloItems;
     $('#budgetLabel').textContent =
       `${r.pairSlotsNeeded} / ${r.capacity.pairSlots} duplicatable items · ${r.demand.soloTotal} solo mod(s)` +
       (ds ? ` · ${ds} natural 2-type drop(s) needed` : '') +
@@ -349,10 +349,13 @@
     if (fc.weaponTree.major > 0) wtFree.push('1 major');
     if (fc.weaponTree.heroic > 0) wtFree.push(fc.weaponTree.heroic + ' heroic');
     if (fc.weaponTree.defensive > 0) wtFree.push(fc.weaponTree.defensive + ' defensive');
+    const bits = [];
+    if (fc.fullPairs > 0) bits.push(`${fc.fullPairs} duplicatable slot(s) — 2× one mod of any type`);
+    if (fc.anyTypeSingles > 0) bits.push(`${fc.anyTypeSingles} gear solo slot(s) — 1 mod of any type`);
+    if (fc.constrainedSingles > 0) bits.push(`${fc.constrainedSingles} filler slot(s) on natural 2-type drops / free 3rd slots — 1 mod each, of a type that item doesn't already carry`);
     box.appendChild(el('div', { class: 'assume' }, [
-      el('b', {}, ['Spare capacity: ']),
-      fc.pairs > 0 ? `${fc.pairs} duplicatable slot(s) — each = 2× one mod of any type. ` : 'No pair slots left. ',
-      fc.gearSolos > 0 ? `${fc.gearSolos} gear solo slot(s) — 1 mod of any type. ` : 'No gear solo slots left. ',
+      el('b', {}, [fc.spareGearMods > 0 ? `Spare capacity — room for ${fc.spareGearMods} more gear mod(s): ` : 'Spare capacity: ']),
+      bits.length ? bits.join(' · ') + '. ' : 'every gear slot is assigned. ',
       wtFree.length ? `Weapon-tree room for: ${wtFree.join(', ')} (trait solos only).` : 'Weapon tree full.'
     ]));
     box.appendChild(el('div', { class: 'kv', style: 'margin-top:8px' }, [

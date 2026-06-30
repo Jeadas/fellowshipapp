@@ -302,11 +302,7 @@
     const demand = buildDemand(state);
     const pairTotal = Object.values(demand.pairs).reduce((a, b) => a + b, 0);
     const soloKeysAll = []; Object.keys(demand.solos).forEach(k => { for (let i = 0; i < demand.solos[k]; i++) soloKeysAll.push(k); });
-    const soloPlacement = placeSolos(soloKeysAll, cap);
-
-    const pairSlotsNeeded = pairTotal + soloPlacement.doubleSoloItems;
-    const issues = [];
-    if (pairSlotsNeeded > cap.pairSlots) issues.push(`Needs ${pairSlotsNeeded} duplicatable/­double-solo items but only ${cap.pairSlots} exist (over budget by ${pairSlotsNeeded - cap.pairSlots}).`);
+    const soloPlacement = placeSolos(soloKeysAll, cap);   // rough estimate (refined below from the real sheet)
 
     const { plans, pairPool, soloPool } = assess(state, loadout, demand, cap);
 
@@ -381,12 +377,28 @@
     const souldustNeed = sheet.filter(r => r.role === 'free' && !(r.source === 'owned' && r.plan.done)
       && ((r.carries || []).some(c => c.kind === 'solo') || (r.source === 'owned' && (r.carries || []).length >= 3))).length;
 
+    // Real pair-slot usage from the actual sheet: pairs that found a slot +
+    // the natural 2-type drops (each consumes one pair-capable item).
+    const unplacedPairs = remPairsList.length;
+    const pairSlotsNeeded = pairTotal + leftoverDS.doubleSoloItems;
+    const issues = [];
+    if (pairSlotsNeeded > cap.pairSlots) issues.push(`Over capacity: needs ${pairSlotsNeeded} duplicatable / 2-type items but only ${cap.pairSlots} exist (over by ${pairSlotsNeeded - cap.pairSlots}).`);
+    else if (unplacedPairs > 0) issues.push(`Over capacity: ${unplacedPairs} pair(s) have no slot.`);
     const feasible = issues.length === 0;
     const wt = demand.wt;
-    const gearSolosUsed = sheet.filter(r => (r.role === 'necklace' || r.role === 'free') && (r.carries || []).some(c => c.kind === 'solo' || (r.source === 'owned' && r.role === 'necklace'))).length;
+    // Spare capacity (in real mod slots), broken down by what each can hold:
+    //   fullPairs       — unused duplicatable slots: 2x one mod of any type
+    //   anyTypeSingles  — unused gear solo slots: 1 mod of any type
+    //   constrainedSingles — filler slots on natural 2-type drops / free 3rd
+    //                       slots: 1 mod, but of a type that item doesn't use
+    const fullPairs = Math.max(0, cap.pairSlots - pairSlotsNeeded);
+    const anyTypeSingles = Math.max(0, cap.gearSolos - Math.min(soloKeysAll.length, cap.gearSolos));
+    const dsFillers = leftoverDS.doubleSoloPairs.filter(p => p[1] === null).length;
+    const freeNoSolo = rowsFree.filter(r => r.source === 'farm' && (r.carries || []).some(c => c.kind === 'pair') && !(r.carries || []).some(c => c.kind === 'solo')).length;
+    const constrainedSingles = dsFillers + freeNoSolo;
     const freeCapacity = {
-      pairs: Math.max(0, cap.pairSlots - pairSlotsNeeded),
-      gearSolos: Math.max(0, cap.gearSolos - Math.min(soloKeysAll.length, cap.gearSolos)),
+      fullPairs, anyTypeSingles, constrainedSingles,
+      spareGearMods: 2 * fullPairs + anyTypeSingles + constrainedSingles,
       weaponTree: { major: 1 - (wt.major ? 1 : 0), heroic: 2 - wt.heroic.length, defensive: 2 - wt.defensive.length }
     };
     return {
