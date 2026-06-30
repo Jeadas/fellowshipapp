@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fellowship S3 — BiS Gear Planner</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header>
+  <h1>Fellowship <span class="s">S3</span> · BiS Gear Planner</h1>
+  <span class="sub">Loot 2.0 itemization — plan a path from your stash to your dream build</span>
+  <span class="spacer"></span>
+  <button class="ghost sm" id="btnExport">Export</button>
+  <button class="ghost sm" id="btnImport">Import</button>
+  <button class="ghost sm" id="btnReset">Reset</button>
+  <input type="file" id="fileImport" accept="application/json" hidden>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="setup" class="active">1 · Setup</button>
+  <button data-tab="bis">2 · BiS Target</button>
+  <button data-tab="inv">3 · Inventory</button>
+  <button data-tab="plan">4 · Plan</button>
+  <button data-tab="help">Help</button>
+</nav>
+
+<main>
+  <!-- ========================= SETUP ========================= -->
+  <section class="tabpage active" id="page-setup">
+    <div class="panel">
+      <h2>Slot roles</h2>
+      <p class="hint">14 worn items. Weapon &amp; both Relics are fixed (1st mod = their ability).
+        Of the other 11, assign exactly <b>1 Legendary</b>, <b>8 Set pieces</b>, and <b>2 Free</b> items
+        (the free items are the only ones that can carry a distinct 3rd modifier).</p>
+      <div id="roleValidity"></div>
+      <table id="rolesTable"></table>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h2>Sets</h2>
+        <p class="hint">Define your sets and tag which slots belong to them (cosmetic for planning —
+          a set piece always burns its 1st mod on the set bonus).</p>
+        <div class="row">
+          <div class="field"><label>New set name</label>
+            <input id="setName" list="knownSets" placeholder="e.g. Draconic Might"></div>
+          <button class="sm" id="btnAddSet">Add set</button>
+          <datalist id="knownSets"></datalist>
+        </div>
+        <div id="setsList"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Weapon trait tree</h2>
+        <p class="hint">Separate from the weapon's 2 modifier slots: grants <b>+1 rank</b> to one Major,
+          two Heroic and two Defensive traits (freely re-rollable, off the 27-mod budget).</p>
+        <div class="field"><label><input type="checkbox" id="wtAuto" checked> Auto-pick from my BiS target</label></div>
+        <div id="wtManual"></div>
+        <hr class="sep">
+        <h3>Modeling assumptions</h3>
+        <div class="assume" id="assumeBox"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================= BIS ========================= -->
+  <section class="tabpage" id="page-bis">
+    <div class="panel">
+      <h2>Build your BiS target</h2>
+      <p class="hint">Pick a modifier type, then the exact modifier, then how many ranks (modifier slots) you want.
+        Gem essence ranks = ×100 Gem Power. Each rank consumes one of your 27 modifier slots.</p>
+      <div class="row">
+        <div class="field"><label>Type</label><select id="reqCat"></select></div>
+        <div class="field"><label>Modifier</label><select id="reqName"></select></div>
+        <div class="field"><label>Ranks</label><input type="number" id="reqRanks" min="1" max="8" value="4"></div>
+        <button id="btnAddReq">Add to build</button>
+      </div>
+      <hr class="sep">
+      <div class="row" style="align-items:center">
+        <h3 style="margin:0">Modifier budget</h3>
+        <span id="budgetLabel" class="mini"></span>
+      </div>
+      <div class="meter" id="budgetMeter"><div></div></div>
+      <div id="reqList" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- ========================= INVENTORY ========================= -->
+  <section class="tabpage" id="page-inv">
+    <div class="panel">
+      <h2>Add an owned item</h2>
+      <p class="hint">Enter items sitting in your stash that are not yet maxed. Pick the slot, its current rarity,
+        and each <b>customizable</b> modifier it currently has, in slot order.
+        <b>Skip the locked 1st slot</b> on set pieces (set bonus), Weapons / Relics (ability) and the necklace attunement —
+        only enter the mods you can actually re-roll. The planner re-checks your path on every add.</p>
+      <div class="row">
+        <div class="field"><label>Slot</label><select id="invSlot"></select></div>
+        <div class="field"><label>Rarity</label><select id="invRarity"></select></div>
+      </div>
+      <div id="invMods" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:10px">
+        <div class="field" style="flex:1"><label>Note (optional)</label><input id="invNote" placeholder="e.g. dropped in Eternal"></div>
+        <button id="btnAddItem">Add item</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Stash <span class="mini" id="invCount"></span></h2>
+      <div class="row" style="margin-bottom:10px">
+        <div class="field"><label>Legendary Souldust owned (for Reroll-Slot)</label>
+          <input type="number" id="souldustOwned" min="0" value="0"></div>
+      </div>
+      <table id="invTable"></table>
+    </div>
+  </section>
+
+  <!-- ========================= PLAN ========================= -->
+  <section class="tabpage" id="page-plan">
+    <div id="planOut"></div>
+  </section>
+
+  <!-- ========================= HELP ========================= -->
+  <section class="tabpage" id="page-help">
+    <div class="panel" id="helpBox"></div>
+  </section>
+</main>
+
+<script src="js/data.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
