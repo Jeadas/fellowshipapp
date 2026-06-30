@@ -369,12 +369,21 @@
   }
 
   /* ================= INVENTORY TAB ================= */
+  function fillInvSetSelect() {
+    const sel = $('#invSet'); const cur = sel.value; clear(sel);
+    const fixed = G.FIXED_ROLE[$('#invSlot').value];   // weapon/relic have an ability, not a set
+    sel.disabled = !!fixed;
+    sel.appendChild(opt('', fixed ? 'ability slot (no set)' : 'No set / free base'));
+    if (!fixed) state.sets.forEach(s => sel.appendChild(opt(s.name, s.name, cur === s.name)));
+  }
   function renderInvForm() {
     const ss = $('#invSlot'); clear(ss); G.SLOTS.forEach(s => ss.appendChild(opt(s)));
     const rr = $('#invRarity'); clear(rr);
     ['Uncommon', 'Rare', 'Epic', 'Heroic', 'Regal'].forEach(r => rr.appendChild(opt(r, r, r === 'Rare')));
+    fillInvSetSelect();
     renderInvModRows();
   }
+  $('#invSlot').addEventListener('change', fillInvSetSelect);
   function renderInvModRows() {
     const box = $('#invMods'); clear(box);
     box.appendChild(el('div', { class: 'mini', style: 'margin-bottom:6px' }, ['Current modifiers (in slot order):']));
@@ -398,7 +407,8 @@
     });
     state.inventory.push({
       id: 'it' + Date.now(), slot: $('#invSlot').value,
-      rarity: $('#invRarity').value, mods, note: $('#invNote').value.trim()
+      rarity: $('#invRarity').value, set: $('#invSet').value || null,
+      mods, note: $('#invNote').value.trim()
     });
     $('#invNote').value = ''; renderInvModRows(); save(); renderInvTable();
   });
@@ -408,11 +418,12 @@
     $('#souldustOwned').value = state.settings.souldustOwned || 0;
     $('#invCount').textContent = '(' + state.inventory.length + ' items)';
     const t = $('#invTable'); clear(t);
-    t.appendChild(el('tr', {}, ['Slot', 'Rarity', 'Modifiers', 'Note', ''].map(th)));
+    t.appendChild(el('tr', {}, ['Slot', 'Rarity', 'Set', 'Modifiers', 'Note', ''].map(th)));
     state.inventory.forEach(it => {
       t.appendChild(el('tr', {}, [
         el('td', {}, [el('b', {}, [it.slot])]),
         el('td', {}, [it.rarity]),
+        el('td', {}, [it.set ? el('span', { class: 'tag role' }, [it.set]) : el('span', { class: 'mini' }, ['—'])]),
         el('td', {}, it.mods.length ? it.mods.map(m => catTag(m.category, m.name)) : [el('span', { class: 'mini' }, ['—'])]),
         el('td', { class: 'mini' }, [it.note || '']),
         el('td', {}, [el('button', { class: 'danger sm', onclick: () => {

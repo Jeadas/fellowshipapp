@@ -190,6 +190,15 @@
   /* ---------- owned-item matching (greedy cheapest) -------------- */
   function roleOf(loadout, slot) { return G.FIXED_ROLE[slot] || ((loadout && loadout.slotRoles) || {})[slot] || 'set'; }
 
+  // The set bonus on slot 1 can't be crafted away, so an owned piece only fits
+  // a loadout where that slot's set matches: a set piece needs the same set; a
+  // free slot needs a non-set base; weapon/relic carry an ability, not a set.
+  function setMatches(item, loadout, slot, role) {
+    if (role === 'free') return !item.set;
+    if (role === 'set') { const want = ((loadout && loadout.setOfSlot) || {})[slot]; return !want || item.set === want; }
+    return true;
+  }
+
   function assess(state, loadout, demand, cap) {
     // mutable demand pools
     const pairPool = {};  Object.keys(demand.pairs).forEach(k => (pairPool[k] = demand.pairs[k]));
@@ -201,6 +210,7 @@
     const cands = [];
     (state.inventory || []).forEach((item, idx) => {
       const role = roleOf(loadout, item.slot);
+      if (!setMatches(item, loadout, item.slot, role)) return;   // wrong set for this loadout
       const m0 = item.mods[0], m1 = item.mods[1];
       if (role === 'free') {
         if (!m0) return;                              // need 1st mod to know its category
@@ -299,9 +309,17 @@
       const m0 = item.mods[0];
       const where = role === 'free' ? '1st mod' : (item.slot === 'Necklace' ? '3rd mod' : '2nd slot');
       const revealAt = role === 'free' ? 'Rare' : (item.slot === 'Necklace' ? 'Regal' : 'Epic');
-      const dropReason = !m0
-        ? `No customizable mod yet — upgrade to ${revealAt} to reveal its ${where} category, then re-check.`
-        : `Its ${lbl(m0.category)} (${where}) doesn't match anything still needed — drop & re-attempt, or keep for another build.`;
+      let dropReason;
+      if (!setMatches(item, loadout, item.slot, role)) {
+        const want = ((loadout && loadout.setOfSlot) || {})[item.slot];
+        dropReason = role === 'free'
+          ? `It's a ${item.set} set piece, but this loadout uses ${item.slot} as a free (non-set) item — it can't fit here.`
+          : `Wrong set: it's ${item.set || 'a non-set base'}, but this loadout needs ${item.slot} = ${want || '(unset)'}. Fits a loadout where ${item.slot} is ${item.set || 'free'}.`;
+      } else if (!m0) {
+        dropReason = `No customizable mod yet — upgrade to ${revealAt} to reveal its ${where} category, then re-check.`;
+      } else {
+        dropReason = `Its ${lbl(m0.category)} (${where}) doesn't match anything still needed — drop & re-attempt, or keep for another build.`;
+      }
       plans.push({ slot: item.slot, role, use: 'drop', item, contributes: [], steps: [], marks: 0, souldust: 0, dropReason });
     });
 
