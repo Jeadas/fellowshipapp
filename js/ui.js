@@ -321,11 +321,16 @@
     r.issues.forEach(i => out.appendChild(el('div', { class: 'banner bad' }, [i])));
 
     // stat cards
+    const ownedRows = r.sheet.filter(x => x.source === 'owned').length;
+    const farmRows = r.sheet.filter(x => x.source === 'farm').length;
+    const fillerRows = r.sheet.filter(x => x.source === 'filler').length;
+    const sdCard = card(r.souldustOwned + ' / ' + r.souldustNeed, 'Souldust have / may need');
+    if (r.souldustOwned < r.souldustNeed) { sdCard.style.outline = '1px solid var(--warn)'; }
     out.appendChild(el('div', { class: 'stat-cards' }, [
       card('≈' + r.totals.marks, 'Marks to finish owned'),
-      card(r.totals.souldust, 'Souldust (owned)'),
-      card(doneCount + '/' + r.ownedPlans.length, 'Owned items done'),
-      card(r.remaining.pairs.reduce((s, p) => s + p.count, 0) + r.remaining.solos.length, 'Mods left to farm')
+      sdCard,
+      card(ownedRows + '/' + r.sheet.length, 'Loadout owned'),
+      card(farmRows, 'Items to farm')
     ]));
 
     // weapon tree
@@ -339,17 +344,32 @@
       el('p', { class: 'note', style: 'margin-top:8px' }, ['Roll the weapon tree to these — 1 major, 2 distinct heroic, 2 distinct defensive. Each is +1 free rank that soaks up an odd trait count.'])
     ]));
 
-    // owned item advice
-    const ownBox = el('div', { class: 'panel' }, [
-      el('h2', {}, ['What to do with each item you own']),
-      el('p', { class: 'hint' }, ['Slot-agnostic: items are matched to your needs by category and steered the cheapest way. Re-add a re-crafted item and the plan updates; bricked items show as “drop & re-attempt”.'])]);
-    if (!r.ownedPlans.length && !r.drops.length) ownBox.appendChild(el('p', { class: 'mini' }, ['No owned items yet — add them on the Inventory tab.']));
-    r.ownedPlans.forEach(p => ownBox.appendChild(ownedDetails(p)));
-    r.drops.forEach(d => ownBox.appendChild(el('div', { class: 'assume', style: 'margin-top:8px' }, [
-      el('b', {}, [d.slot + ' (' + d.role + '): ']), d.dropReason])));
-    out.appendChild(ownBox);
+    // 13-item loadout sheet
+    const sheetTbl = el('table');
+    sheetTbl.appendChild(el('tr', {}, ['#', 'Worn item', 'Carries', 'Source'].map(th)));
+    r.sheet.forEach((row, i) => {
+      const tr = el('tr');
+      tr.appendChild(el('td', { class: 'mini' }, [String(i + 1)]));
+      tr.appendChild(el('td', {}, [el('b', {}, [row.type]), row.isFree ? el('span', { class: 'mini' }, [' · 3 slots']) : '']));
+      tr.appendChild(carriesCell(row));
+      tr.appendChild(sourceCell(row));
+      sheetTbl.appendChild(tr);
+    });
+    out.appendChild(el('div', { class: 'panel' }, [
+      el('h2', {}, ['Your ' + r.sheet.length + '-item loadout (everything but the legendary)']),
+      el('p', { class: 'hint' }, ['Slot-agnostic — “carries” is the modifier content; you choose which physical slot. ' +
+        ownedRows + ' filled from your stash · ' + farmRows + ' to farm' + (fillerRows ? ' · ' + fillerRows + ' free-choice (filler)' : '') + '.']),
+      sheetTbl
+    ]));
 
-    // free-item decision trees (generic, for what's left to build)
+    // crafting steps for owned items
+    if (r.ownedPlans.length) {
+      const ownBox = el('div', { class: 'panel' }, [el('h2', {}, ['Crafting steps for items you own'])]);
+      r.ownedPlans.forEach(p => ownBox.appendChild(ownedDetails(p)));
+      out.appendChild(ownBox);
+    }
+
+    // free-item decision trees
     const trees = Engine.freeItemTrees(state, Engine.buildDemand(state));
     if (trees.length) {
       const box = el('div', { class: 'panel' }, [el('h2', {}, ['Free-item decision trees']),
@@ -358,40 +378,56 @@
       out.appendChild(box);
     }
 
-    // remaining to farm
-    const farmBox = el('div', { class: 'panel' }, [el('h2', {}, ['Remaining — what to farm']),
-      el('p', { class: 'hint' }, ['After subtracting everything your owned items can become. Pairs first (highest-impact, 2 ranks each), then solos, then any natural 2-type drops.'])]);
-    if (!r.remaining.pairs.length && !r.remaining.solos.length && !r.remaining.doubleSoloItems) {
-      farmBox.appendChild(el('div', { class: 'banner ok' }, ['✔ Your owned items cover the whole build — just finish the crafting steps above.']));
-    } else {
-      const tb = el('table');
-      tb.appendChild(el('tr', {}, ['Need', 'Modifier', 'How', 'Marks ea.'].map(th)));
-      r.remaining.pairs.forEach(p => tb.appendChild(el('tr', {}, [
-        el('td', {}, [el('span', { class: 'tag', style: 'background:rgba(122,162,247,.16);color:var(--accent2)' }, ['pair ×' + p.count])]),
-        el('td', {}, [catTag(p.category, p.name)]),
-        el('td', { class: 'mini' }, ['Drop a duplicatable item whose free slot is a ' + G.CATEGORIES[p.category].label + ', roll to ' + p.name + ', flood the dup.']),
-        el('td', { class: 'mini' }, ['≈' + (G.POOL_SIZE[p.category] * 5) + ' + 15'])
-      ])));
-      r.remaining.solos.forEach(s => tb.appendChild(el('tr', {}, [
-        el('td', {}, [el('span', { class: 'tag', style: 'background:rgba(212,175,55,.16);color:var(--accent)' }, ['solo'])]),
-        el('td', {}, [catTag(s.category, s.name)]),
-        el('td', { class: 'mini' }, [G.CATEGORY_ORDER.indexOf(s.category) < 4 && ['major', 'heroic', 'defensive'].includes(s.category)
-          ? 'Weapon tree, or a gear solo (necklace / free-item 3rd slot).'
-          : 'A gear solo slot — necklace (farm the category) or a free-item 3rd slot (souldust to fix).']),
-        el('td', { class: 'mini' }, ['≈' + (G.POOL_SIZE[s.category] * 5)])
-      ])));
-      farmBox.appendChild(tb);
-      if (r.remaining.doubleSoloItems) {
-        farmBox.appendChild(el('div', { class: 'assume', style: 'margin-top:10px' }, [
-          el('b', {}, ['⚑ ' + r.remaining.doubleSoloItems + ' natural 2-type drop(s) needed. ']),
-          'You have more solo mods than solo slots. You cannot build two different mod-types on one fixed-first item (upgrading always duplicates the type), so drop a naturally-Regal set/weapon/relic that already carries two different types: ',
-          ...r.remaining.doubleSoloPairs.map(pr => el('span', { class: 'pill' }, [
-            pr[0] ? catTag(pr[0].category) : el('span', {}, ['?']), ' + ',
-            pr[1] ? catTag(pr[1].category) : el('span', { class: 'mini' }, ['any other'])]))
-        ]));
-      }
+    // notes: double-solo + souldust shortage
+    const notes = [];
+    if (r.remaining.doubleSoloItems) notes.push(el('div', { class: 'assume', style: 'margin-bottom:8px' }, [
+      el('b', {}, ['⚑ ' + r.remaining.doubleSoloItems + ' natural 2-type drop(s) needed. ']),
+      'More solo mods than solo slots — you can’t build two different mod-types on one fixed-first item (upgrading duplicates the type). Drop a naturally-Regal set/weapon/relic that already carries two different types: ',
+      ...r.remaining.doubleSoloPairs.map(pr => el('span', { class: 'pill' }, [
+        pr[0] ? catTag(pr[0].category) : el('span', {}, ['?']), ' + ',
+        pr[1] ? catTag(pr[1].category) : el('span', { class: 'mini' }, ['any other'])]))]));
+    if (r.souldustOwned < r.souldustNeed) notes.push(el('div', { class: 'assume' }, [
+      el('b', {}, ['Souldust: ']), `this plan may need up to ${r.souldustNeed} Legendary Souldust for free-item 3rd mods, but you have ${r.souldustOwned}. ` +
+      'Farm more, or rely on lucky 3rd-mod rolls and re-attempts.']));
+    if (notes.length) out.appendChild(el('div', { class: 'panel' }, [el('h2', {}, ['Heads-up']), ...notes]));
+
+    // spares / unusable owned items (grouped)
+    const groups = {};
+    r.drops.forEach(d => { const k = d.slot + '|' + d.role + '|' + d.dropReason; (groups[k] = groups[k] || { d, count: 0 }).count++; });
+    if (Object.keys(groups).length || (r.spares && r.spares.length)) {
+      const box = el('div', { class: 'panel' }, [el('h2', {}, ['Spare / unusable items in your stash']),
+        el('p', { class: 'hint' }, ['Owned items that don’t fit the current build. Drop & re-attempt, or keep for another build. (Two of a type = you entered two; you only wear one.)'])]);
+      Object.values(groups).forEach(g => box.appendChild(el('div', { class: 'assume', style: 'margin-top:8px' }, [
+        el('b', {}, [g.d.slot + ' (' + g.d.role + ')' + (g.count > 1 ? ' ×' + g.count : '') + ': ']), g.d.dropReason])));
+      (r.spares || []).forEach(p => box.appendChild(el('div', { class: 'assume', style: 'margin-top:8px' }, [
+        el('b', {}, [p.slot + ' (spare): ']), 'You already have enough usable ' + p.role + ' items for the loadout — keep this for re-attempts.'])));
+      out.appendChild(box);
     }
-    out.appendChild(farmBox);
+  }
+
+  function carriesCell(row) {
+    const cell = el('td');
+    if (!row.carries || !row.carries.length) { cell.appendChild(el('span', { class: 'mini' }, ['free choice (filler)'])); return cell; }
+    if (row.source === 'owned') {
+      const cnt = {}; row.carries.forEach(c => (cnt[c.category + '::' + c.name] = (cnt[c.category + '::' + c.name] || 0) + 1));
+      Object.keys(cnt).forEach(k => { const [cat, name] = k.split('::'); cell.appendChild(catTag(cat, (cnt[k] > 1 ? '2× ' : '') + name)); });
+    } else {
+      row.carries.forEach(c => cell.appendChild(catTag(c.category, (c.kind === 'pair' ? '2× ' : '') + c.name + (c.kind === 'solo' ? ' ·solo' : ''))));
+    }
+    return cell;
+  }
+  function sourceCell(row) {
+    const cell = el('td');
+    if (row.source === 'owned') {
+      const p = row.plan;
+      cell.appendChild(el('span', { class: 'tag', style: 'background:rgba(63,185,80,.16);color:#7ee787' }, ['your ' + p.item.slot]));
+      cell.appendChild(el('span', { class: 'mini' }, [p.done ? ' ✓ done' : ' ≈' + p.marks + 'm' + (p.souldust ? ' · ' + p.souldust + ' SD' : '')]));
+    } else if (row.source === 'farm') {
+      cell.appendChild(el('span', { class: 'tag', style: 'background:rgba(227,179,65,.16);color:#e3b341' }, ['farm']));
+    } else {
+      cell.appendChild(el('span', { class: 'mini' }, ['—']));
+    }
+    return cell;
   }
 
   function ownedDetails(p) {

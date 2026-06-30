@@ -280,11 +280,12 @@
       if (usedItem.has(idx)) return;
       const role = roleOf(state, item.slot);
       const m0 = item.mods[0];
-      const relevant = role === 'free' ? (m0 ? lbl(m0.category) + ' (1st mod)' : 'no 1st mod yet')
-        : (role === 'set' && item.slot === 'Necklace') ? (m0 ? lbl(m0.category) + ' (3rd mod)' : 'no free mod yet')
-          : (m0 ? lbl(m0.category) + ' (2nd slot)' : 'no 2nd slot yet (upgrade to Epic to reveal it)');
-      plans.push({ slot: item.slot, role, use: 'drop', item, contributes: [], steps: [], marks: 0, souldust: 0,
-        dropReason: `Its ${relevant} doesn't match anything still needed — drop it and re-attempt (or keep for a different build).` });
+      const where = role === 'free' ? '1st mod' : (item.slot === 'Necklace' ? '3rd mod' : '2nd slot');
+      const revealAt = role === 'free' ? 'Rare' : (item.slot === 'Necklace' ? 'Regal' : 'Epic');
+      const dropReason = !m0
+        ? `No customizable mod yet — upgrade to ${revealAt} to reveal its ${where} category, then re-check.`
+        : `Its ${lbl(m0.category)} (${where}) doesn't match anything still needed — drop & re-attempt, or keep for another build.`;
+      plans.push({ slot: item.slot, role, use: 'drop', item, contributes: [], steps: [], marks: 0, souldust: 0, dropReason });
     });
 
     return { plans, pairPool, soloPool };
@@ -313,24 +314,44 @@
     const drops = plans.filter(p => p.use === 'drop');
     const totals = ownedPlans.reduce((t, p) => ({ marks: t.marks + p.marks, souldust: t.souldust + p.souldust }), { marks: 0, souldust: 0 });
 
-    // farm list = remaining pairs + remaining solos + double-solo drops, prioritised
-    const farm = [];
-    remPairs.forEach(p => farm.push({ kind: 'pair', category: p.category, name: p.name, count: p.count,
-      note: `Farm a duplicatable item whose free slot is a ${lbl(p.category)} → roll to ${p.name}, flood the dup.` }));
-    remSolos.forEach(s => farm.push({ kind: 'solo', category: s.category, name: s.name,
-      note: TRAIT_CATS.includes(s.category) ? `Solo ${lbl(s.category)} — weapon tree or a gear solo slot.` : `Solo — necklace or a free-item 3rd slot.` }));
-    if (remSoloPlacement.doubleSoloItems > 0)
-      farm.push({ kind: 'double-solo', count: remSoloPlacement.doubleSoloItems, pairs: remSoloPlacement.doubleSoloPairs,
-        note: `Drop ${remSoloPlacement.doubleSoloItems} naturally-Regal set/weapon/relic item(s) carrying 2 DIFFERENT mod-types (can't be built by upgrading).` });
+    // ---- souldust accounting (only free-item 3rd slots ever use it) ----
+    const necklaceSolo = cap.necklace ? 1 : 0;
+    const souldustNeed = Math.max(0, Math.min(soloKeysAll.length, cap.gearSolos) - necklaceSolo);
+    const souldustOwned = (state.settings && state.settings.souldustOwned) || 0;
+
+    // ---- the full worn loadout: 13 gear items (everything but the legendary) ----
+    const remPairsList = []; remPairs.forEach(p => { for (let i = 0; i < p.count; i++) remPairsList.push({ category: p.category, name: p.name }); });
+    const remSolosList = remSolos.slice();
+    const ownedByRole = { necklace: [], free: [], weapon: [], relic: [], set: [] };
+    ownedPlans.forEach(p => { const k = (p.role === 'set' && p.slot === 'Necklace') ? 'necklace' : p.role; (ownedByRole[k] = ownedByRole[k] || []).push(p); });
+    const sheet = [], spares = [];
+    function fillRows(typeLabel, role, n, isFree, isNeck) {
+      const arr = ownedByRole[role] || [];
+      for (let i = 0; i < n; i++) {
+        if (arr[i]) { sheet.push({ type: typeLabel, role, source: 'owned', plan: arr[i], carries: arr[i].contributes, isFree, isNeck }); continue; }
+        const carries = [];
+        if (isNeck) { if (remSolosList.length) carries.push({ ...remSolosList.shift(), kind: 'solo' }); }
+        else {
+          if (remPairsList.length) { const p = remPairsList.shift(); carries.push({ category: p.category, name: p.name, kind: 'pair' }); }
+          if (isFree && remSolosList.length) carries.push({ ...remSolosList.shift(), kind: 'solo' });
+        }
+        sheet.push({ type: typeLabel, role, source: carries.length ? 'farm' : 'filler', carries, isFree, isNeck });
+      }
+      for (let i = n; i < arr.length; i++) spares.push(arr[i]);   // owned beyond wearable count
+    }
+    fillRows('Necklace', 'necklace', necklaceSolo, false, true);
+    fillRows('Free item', 'free', cap.freeItems, true, false);
+    fillRows('Weapon', 'weapon', cap.weapon, false, false);
+    fillRows('Relic', 'relic', cap.relics, false, false);
+    fillRows('Set piece', 'set', cap.nonNeckSets, false, false);
 
     const feasible = issues.length === 0;
     return {
       feasible, issues, weaponTree: demand.wt, capacity: cap,
       demand: { pairs: demand.pairs, solos: demand.solos, pairTotal, soloTotal: soloKeysAll.length },
-      soloPlacement, pairSlotsNeeded,
-      ownedPlans, drops, totals,
-      remaining: { pairs: remPairs, solos: remSolos, doubleSoloItems: remSoloPlacement.doubleSoloItems, doubleSoloPairs: remSoloPlacement.doubleSoloPairs },
-      farm
+      soloPlacement, pairSlotsNeeded, souldustOwned, souldustNeed,
+      ownedPlans, drops, spares, totals, sheet,
+      remaining: { pairs: remPairs, solos: remSolos, doubleSoloItems: remSoloPlacement.doubleSoloItems, doubleSoloPairs: remSoloPlacement.doubleSoloPairs }
     };
   }
 
