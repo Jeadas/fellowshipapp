@@ -383,37 +383,58 @@
     fillPairRows('Set piece', 'set', cap.nonNeckSets);
 
     const sheet = [...rowsNeck, ...rowsFree, ...rowsPair.weapon, ...rowsPair.relic, ...rowsPair.set];
-    // any solos that couldn't take a gear slot need natural 2-type drops
-    const leftoverDS = pairUp(remSolosList);
+
+    // --- place leftover solos onto the spare (filler) fixed-first slots ---
+    // A fixed-first slot pair holds TWO mods of the SAME category (slot 3 dups
+    // slot 2 and re-rolls within that category). So per spare item:
+    //   lone solo  -> 1 wanted mod + 1 same-category filler        (cheap)
+    //   2 same-cat -> craftable but LOW ODDS: re-roll the category, both slots
+    //                 re-roll, pray for the combo (~pool^2/2 rolls)  (expensive)
+    //   2 diff-cat -> can't be crafted on a fixed-first item -> NATURAL DROP
+    // Lone placement is used while spare slots last; doubling (expensive or a
+    // natural drop) only kicks in once you actually run out of slots.
+    const fillerRows = [...rowsPair.weapon, ...rowsPair.relic, ...rowsPair.set].filter(r => r.source === 'filler');
+    const byCat = {}; remSolosList.forEach(s => (byCat[s.category] = byCat[s.category] || []).push(s));
+    const cats = Object.keys(byCat);
+    const S = fillerRows.length, L = remSolosList.length;
+    const doublesTarget = Math.max(0, L - S);     // how many slots must hold 2
+    const expensivePairs = [], naturalDrops = [];
+    let formed = 0;
+    for (const c of cats) while (formed < doublesTarget && byCat[c].length >= 2) { expensivePairs.push([byCat[c].pop(), byCat[c].pop()]); formed++; }
+    while (formed < doublesTarget) {
+      const avail = cats.filter(c => byCat[c].length).sort((a, b) => byCat[b].length - byCat[a].length);
+      if (avail.length < 2) break;
+      naturalDrops.push([byCat[avail[0]].pop(), byCat[avail[1]].pop()]); formed++;
+    }
+    const lones = []; cats.forEach(c => byCat[c].forEach(s => lones.push(s)));
+    let fi = 0;
+    const tagRow = (mods, kind) => { if (fi < S) { const r = fillerRows[fi++]; r.source = 'farm'; r.soloKind = kind; r.carries = mods.map(m => ({ category: m.category, name: m.name, kind: 'solo' })); } };
+    expensivePairs.forEach(p => tagRow(p, 'expensive'));
+    naturalDrops.forEach(p => tagRow(p, 'natural'));
+    lones.forEach(s => tagRow([s], 'lone'));
+    const soloRowsUsed = expensivePairs.length + naturalDrops.length + lones.length;
+    const unplacedSolos = Math.max(0, soloRowsUsed - S);   // ran out of fixed-first slots
 
     // souldust: one per free item that carries a (random) 3rd-slot solo and isn't already done
     const souldustNeed = sheet.filter(r => r.role === 'free' && !(r.source === 'owned' && r.plan.done)
       && ((r.carries || []).some(c => c.kind === 'solo') || (r.source === 'owned' && (r.carries || []).length >= 3))).length;
 
-    // Real pair-slot usage from the actual sheet: pairs that found a slot +
-    // the natural 2-type drops (each consumes one pair-capable item).
     const unplacedPairs = remPairsList.length;
-    const pairSlotsNeeded = pairTotal + leftoverDS.doubleSoloItems;
+    const pairSlotsNeeded = pairTotal + Math.min(S, soloRowsUsed);
     const issues = [];
-    if (pairSlotsNeeded > cap.pairSlots) issues.push(`Over capacity: needs ${pairSlotsNeeded} duplicatable / 2-type items but only ${cap.pairSlots} exist (over by ${pairSlotsNeeded - cap.pairSlots}).`);
-    else if (unplacedPairs > 0) issues.push(`Over capacity: ${unplacedPairs} pair(s) have no slot.`);
+    if (unplacedPairs > 0 || unplacedSolos > 0) issues.push(`Over capacity by ${unplacedPairs * 2 + unplacedSolos} mod(s) — more than the ${cap.pairSlots} duplicatable + ${cap.gearSolos} solo slots can hold.`);
     const feasible = issues.length === 0;
     const wt = demand.wt;
-    // Spare capacity (in real mod slots), broken down by what each can hold:
-    //   fullPairs       — unused duplicatable slots: 2x one mod of any type
-    //   anyTypeSingles  — unused gear solo slots: 1 mod of any type
-    //   constrainedSingles — filler slots on natural 2-type drops / free 3rd
-    //                       slots: 1 mod, but of a type that item doesn't use
-    const fullPairs = Math.max(0, cap.pairSlots - pairSlotsNeeded);
+    // Spare capacity, by what each empty slot can still hold.
+    const emptyPairs = fillerRows.filter(r => r.source === 'filler').length;   // wholly unused pair-slots: 2x any
+    const loneRows = fillerRows.filter(r => r.soloKind === 'lone').length;      // 1 same-category filler each
     const anyTypeSingles = Math.max(0, cap.gearSolos - Math.min(soloKeysAll.length, cap.gearSolos));
-    const dsFillers = leftoverDS.doubleSoloPairs.filter(p => p[1] === null).length;
-    const freeNoSolo = rowsFree.filter(r => r.source === 'farm' && (r.carries || []).some(c => c.kind === 'pair') && !(r.carries || []).some(c => c.kind === 'solo')).length;
-    const constrainedSingles = dsFillers + freeNoSolo;
     const freeCapacity = {
-      fullPairs, anyTypeSingles, constrainedSingles,
-      spareGearMods: 2 * fullPairs + anyTypeSingles + constrainedSingles,
+      fullPairs: emptyPairs, anyTypeSingles, constrainedSingles: loneRows,
+      spareGearMods: 2 * emptyPairs + anyTypeSingles + loneRows,
       weaponTree: { major: 1 - (wt.major ? 1 : 0), heroic: 2 - wt.heroic.length, defensive: 2 - wt.defensive.length }
     };
+    const toMod = a => a && { category: a.category, name: a.name };
     return {
       feasible, issues, weaponTree: wt, capacity: cap, loadout, freeCapacity,
       demand: { pairs: demand.pairs, solos: demand.solos, pairTotal, soloTotal: soloKeysAll.length },
@@ -421,7 +442,9 @@
       ownedPlans, drops, spares, totals, sheet,
       farmRows: sheet.filter(x => x.source === 'farm').length,
       ownedRows: sheet.filter(x => x.source === 'owned').length,
-      remaining: { pairs: remPairs, solos: remSolosList.slice(), doubleSoloItems: leftoverDS.doubleSoloItems, doubleSoloPairs: leftoverDS.doubleSoloPairs, doubleSoloDrops: leftoverDS.drops }
+      naturalDrops: naturalDrops.map(p => p.map(toMod)),
+      expensivePairs: expensivePairs.map(p => p.map(toMod)),
+      remaining: { pairs: remPairs, solos: remSolosList.slice(), naturalDrops: naturalDrops.map(p => p.map(toMod)), expensivePairs: expensivePairs.map(p => p.map(toMod)) }
     };
   }
 

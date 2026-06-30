@@ -333,10 +333,11 @@
     const r = Engine.solve(state, lo());
     const m = $('#budgetMeter'); m.classList.toggle('over', !r.feasible);
     m.firstChild.style.width = Math.min(100, r.pairSlotsNeeded / Math.max(1, r.capacity.pairSlots) * 100) + '%';
-    const ds = r.remaining.doubleSoloItems;
+    const nd = (r.naturalDrops || []).length, ex = (r.expensivePairs || []).length;
     $('#budgetLabel').textContent =
       `${r.pairSlotsNeeded} / ${r.capacity.pairSlots} duplicatable items · ${r.demand.soloTotal} solo mod(s)` +
-      (ds ? ` · ${ds} natural 2-type drop(s) needed` : '') +
+      (nd ? ` · ${nd} natural drop(s)` : '') +
+      (ex ? ` · ${ex} low-odds same-type craft(s)` : '') +
       (r.feasible ? '' : ' — OVER capacity!');
     renderCapacity(r);
   }
@@ -525,17 +526,25 @@
       out.appendChild(box);
     }
 
-    // notes: natural drops + souldust shortage
+    // notes: natural drops, low-odds same-type crafts, souldust shortage
     const notes = [];
-    const drops = r.remaining.doubleSoloDrops || (r.remaining.doubleSoloPairs || []).map(p => ({ mods: p, hard: false }));
-    if (drops.length) {
+    if ((r.naturalDrops || []).length) {
       const note = el('div', { class: 'assume', style: 'margin-bottom:8px' }, [
-        el('b', {}, ['⚑ ' + drops.length + ' natural drop(s) needed. ']),
-        'More solo mods than solo slots — you can’t build two different mods onto one fixed-first item (upgrading duplicates, and re-rolling a category re-rolls all its slots). So farm a naturally-Regal item that already carries: ']);
-      drops.forEach(d => note.appendChild(el('span', { class: 'pill', style: d.hard ? 'border-color:var(--warn)' : '' }, [
-        d.mods[0] ? catTag(d.mods[0].category, d.mods[0].name) : el('span', {}, ['?']), ' + ',
-        d.mods[1] ? catTag(d.mods[1].category, d.mods[1].name) : el('span', { class: 'mini' }, ['any other type']),
-        d.hard ? el('span', { class: 'mini', style: 'color:var(--warn)' }, [' — exact drop (can’t craft)']) : ''])));
+        el('b', {}, ['⚑ ' + r.naturalDrops.length + ' natural drop(s) needed. ']),
+        'Out of slots — and two DIFFERENT categories can’t be crafted onto one fixed-first item (slot 3 always duplicates slot 2’s category, and souldust only works on free items). So farm a naturally-Regal set/weapon/relic that already dropped carrying: ']);
+      r.naturalDrops.forEach(p => note.appendChild(el('span', { class: 'pill', style: 'border-color:var(--warn)' }, [
+        catTag(p[0].category, p[0].name), ' + ', catTag(p[1].category, p[1].name)])));
+      notes.push(note);
+    }
+    if ((r.expensivePairs || []).length) {
+      const note = el('div', { class: 'assume', style: 'margin-bottom:8px' }, [
+        el('b', {}, [r.expensivePairs.length + ' low-odds same-type craft(s). ']),
+        'Two different mods of the SAME category on one item IS craftable — flood to two slots of that category, then re-roll the category until both land (each roll re-rolls both slots). Possible, just low odds: ']);
+      r.expensivePairs.forEach(p => {
+        const N = G.POOL_SIZE[p[0].category];
+        note.appendChild(el('span', { class: 'pill' }, [catTag(p[0].category, p[0].name), ' + ', catTag(p[1].category, p[1].name),
+          el('span', { class: 'mini' }, [' ≈' + Math.round(5 * N * N / 2) + 'm']) ]));
+      });
       notes.push(note);
     }
     if (r.souldustOwned < r.souldustNeed) notes.push(el('div', { class: 'assume' }, [
@@ -565,6 +574,8 @@
       Object.keys(cnt).forEach(k => { const [cat, name] = k.split('::'); cell.appendChild(catTag(cat, (cnt[k] > 1 ? '2× ' : '') + name)); });
     } else {
       row.carries.forEach(c => cell.appendChild(catTag(c.category, (c.kind === 'pair' ? '2× ' : '') + c.name + (c.kind === 'solo' ? ' ·solo' : ''))));
+      if (row.soloKind === 'expensive') cell.appendChild(el('span', { class: 'mini', style: 'color:var(--accent)' }, [' low-odds craft']));
+      else if (row.soloKind === 'natural') cell.appendChild(el('span', { class: 'mini', style: 'color:var(--warn)' }, [' ⚑ natural drop']));
     }
     return cell;
   }
