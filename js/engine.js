@@ -94,22 +94,26 @@
   const split = key => { const i = key.indexOf('::'); return [key.slice(0, i), key.slice(i + 2)]; };
 
   /* ---------- abstract solo placement & double-solo overflow ----- */
-  function placeSolos(soloKeys, cap) {
-    // soloKeys: array of "cat::name" (already excludes weapon-tree ones)
-    const solos = soloKeys.map(k => { const [category, name] = split(k); return { category, name }; });
-    const gear = solos.slice(0, cap.gearSolos);                 // up to 3 on gear, any category
-    const overflow = solos.slice(cap.gearSolos);                // must use natural double-solo drops
-    // pair overflow solos across DIFFERENT categories to minimise drops
+  // Pair up leftover solos across DIFFERENT categories (a natural 2-type drop
+  // carries 2 mods of two different categories). Same-category leftovers each
+  // take their own drop (the other type is filler).
+  function pairUp(solos) {
     const byCat = {};
-    overflow.forEach(s => (byCat[s.category] = byCat[s.category] || []).push(s));
+    solos.forEach(s => (byCat[s.category] = byCat[s.category] || []).push(s));
     const cats = Object.keys(byCat);
     const pairsOut = []; let guard = 0;
-    while (cats.some(c => byCat[c].length) && guard++ < 100) {
+    while (cats.some(c => byCat[c].length) && guard++ < 200) {
       const avail = cats.filter(c => byCat[c].length).sort((a, b) => byCat[b].length - byCat[a].length);
       if (avail.length >= 2) pairsOut.push([byCat[avail[0]].pop(), byCat[avail[1]].pop()]);
-      else pairsOut.push([byCat[avail[0]].pop(), null]);        // lone solo: 2nd type is filler
+      else pairsOut.push([byCat[avail[0]].pop(), null]);
     }
-    return { gear, overflow, doubleSoloItems: pairsOut.length, doubleSoloPairs: pairsOut };
+    return { doubleSoloItems: pairsOut.length, doubleSoloPairs: pairsOut };
+  }
+  function placeSolos(soloKeys, cap) {
+    const solos = soloKeys.map(k => { const [category, name] = split(k); return { category, name }; });
+    const gear = solos.slice(0, cap.gearSolos);                 // up to 3 on gear
+    const overflow = solos.slice(cap.gearSolos);                // need natural 2-type drops
+    return Object.assign({ gear, overflow }, pairUp(overflow));
   }
 
   /* ---------- per-item step generation (progress aware) ---------- */
@@ -309,49 +313,80 @@
     // remaining demand after owned items
     const remPairs = Object.keys(pairPool).filter(k => pairPool[k] > 0).map(k => { const [category, name] = split(k); return { category, name, count: pairPool[k] }; });
     const remSolos = []; Object.keys(soloPool).forEach(k => { for (let i = 0; i < soloPool[k]; i++) { const [category, name] = split(k); remSolos.push({ category, name }); } });
-    const remSoloPlacement = placeSolos(remSolos.map(s => s.category + '::' + s.name), cap);
 
     const ownedPlans = plans.filter(p => p.use !== 'drop');
     const drops = plans.filter(p => p.use === 'drop');
     const totals = ownedPlans.reduce((t, p) => ({ marks: t.marks + p.marks, souldust: t.souldust + p.souldust }), { marks: 0, souldust: 0 });
 
-    // ---- souldust accounting (only free-item 3rd slots ever use it) ----
-    const necklaceSolo = cap.necklace ? 1 : 0;
-    const souldustNeed = Math.max(0, Math.min(soloKeysAll.length, cap.gearSolos) - necklaceSolo);
     const souldustOwned = (state.settings && state.settings.souldustOwned) || 0;
+    const necklaceSolo = cap.necklace ? 1 : 0;
 
     // ---- the full worn loadout: 13 gear items (everything but the legendary) ----
     const remPairsList = []; remPairs.forEach(p => { for (let i = 0; i < p.count; i++) remPairsList.push({ category: p.category, name: p.name }); });
     const remSolosList = remSolos.slice();
     const ownedByRole = { necklace: [], free: [], weapon: [], relic: [], set: [] };
     ownedPlans.forEach(p => { const k = (p.role === 'set' && p.slot === 'Necklace') ? 'necklace' : p.role; (ownedByRole[k] = ownedByRole[k] || []).push(p); });
-    const sheet = [], spares = [];
-    function fillRows(typeLabel, role, n, isFree, isNeck) {
-      const arr = ownedByRole[role] || [];
-      for (let i = 0; i < n; i++) {
-        if (arr[i]) { sheet.push({ type: typeLabel, role, source: 'owned', plan: arr[i], carries: arr[i].contributes, isFree, isNeck }); continue; }
-        const carries = [];
-        if (isNeck) { if (remSolosList.length) carries.push({ ...remSolosList.shift(), kind: 'solo' }); }
-        else {
-          if (remPairsList.length) { const p = remPairsList.shift(); carries.push({ category: p.category, name: p.name, kind: 'pair' }); }
-          if (isFree && remSolosList.length) carries.push({ ...remSolosList.shift(), kind: 'solo' });
+    const spares = [];
+    const rowsNeck = [], rowsFree = [], rowsPair = { weapon: [], relic: [], set: [] };
+    const takeSoloDiff = avoid => { const i = remSolosList.findIndex(s => s.category !== avoid); return i >= 0 ? remSolosList.splice(i, 1)[0] : null; };
+
+    // FREE items FIRST: each carries a pair + a solo of a DIFFERENT category.
+    // (An item may hold at most 2 mods of one category, so the 3rd slot can't
+    // repeat the pair's category — that was the bug.)
+    {
+      const arr = ownedByRole.free;
+      for (let i = 0; i < cap.freeItems; i++) {
+        if (arr[i]) { rowsFree.push({ type: 'Free item', role: 'free', source: 'owned', plan: arr[i], carries: arr[i].contributes, isFree: true }); continue; }
+        const carries = []; let pairCat = null;
+        if (remPairsList.length) {
+          let pi = 0;     // prefer a pair whose category still leaves a placeable (different) solo
+          if (remSolosList.length) { const j = remPairsList.findIndex(p => remSolosList.some(s => s.category !== p.category)); if (j >= 0) pi = j; }
+          const p = remPairsList.splice(pi, 1)[0]; carries.push({ category: p.category, name: p.name, kind: 'pair' }); pairCat = p.category;
         }
-        sheet.push({ type: typeLabel, role, source: carries.length ? 'farm' : 'filler', carries, isFree, isNeck });
+        if (remSolosList.length) { const s = takeSoloDiff(pairCat); if (s) carries.push({ ...s, kind: 'solo' }); }
+        rowsFree.push({ type: 'Free item', role: 'free', source: carries.length ? 'farm' : 'filler', carries, isFree: true });
       }
-      for (let i = n; i < arr.length; i++) spares.push(arr[i]);   // owned beyond wearable count
+      for (let i = cap.freeItems; i < arr.length; i++) spares.push(arr[i]);
     }
-    fillRows('Necklace', 'necklace', necklaceSolo, false, true);
-    fillRows('Free item', 'free', cap.freeItems, true, false);
-    fillRows('Weapon', 'weapon', cap.weapon, false, false);
-    fillRows('Relic', 'relic', cap.relics, false, false);
-    fillRows('Set piece', 'set', cap.nonNeckSets, false, false);
+    // NECKLACE: one solo (any category)
+    {
+      const arr = ownedByRole.necklace;
+      for (let i = 0; i < necklaceSolo; i++) {
+        if (arr[i]) { rowsNeck.push({ type: 'Necklace', role: 'necklace', source: 'owned', plan: arr[i], carries: arr[i].contributes, isNeck: true }); continue; }
+        const carries = []; if (remSolosList.length) carries.push({ ...remSolosList.shift(), kind: 'solo' });
+        rowsNeck.push({ type: 'Necklace', role: 'necklace', source: carries.length ? 'farm' : 'filler', carries, isNeck: true });
+      }
+      for (let i = necklaceSolo; i < arr.length; i++) spares.push(arr[i]);
+    }
+    // WEAPON / RELIC / SET pieces: pairs
+    function fillPairRows(typeLabel, role, n) {
+      const arr = ownedByRole[role];
+      for (let i = 0; i < n; i++) {
+        if (arr[i]) { rowsPair[role].push({ type: typeLabel, role, source: 'owned', plan: arr[i], carries: arr[i].contributes }); continue; }
+        const carries = [];
+        if (remPairsList.length) { const p = remPairsList.shift(); carries.push({ category: p.category, name: p.name, kind: 'pair' }); }
+        rowsPair[role].push({ type: typeLabel, role, source: carries.length ? 'farm' : 'filler', carries });
+      }
+      for (let i = n; i < arr.length; i++) spares.push(arr[i]);
+    }
+    fillPairRows('Weapon', 'weapon', cap.weapon);
+    fillPairRows('Relic', 'relic', cap.relics);
+    fillPairRows('Set piece', 'set', cap.nonNeckSets);
+
+    const sheet = [...rowsNeck, ...rowsFree, ...rowsPair.weapon, ...rowsPair.relic, ...rowsPair.set];
+    // any solos that couldn't take a gear slot need natural 2-type drops
+    const leftoverDS = pairUp(remSolosList);
+
+    // souldust: one per free item that carries a (random) 3rd-slot solo and isn't already done
+    const souldustNeed = sheet.filter(r => r.role === 'free' && !(r.source === 'owned' && r.plan.done)
+      && ((r.carries || []).some(c => c.kind === 'solo') || (r.source === 'owned' && (r.carries || []).length >= 3))).length;
 
     const feasible = issues.length === 0;
     const wt = demand.wt;
-    const gearSolosUsed = Math.min(soloKeysAll.length, cap.gearSolos);
+    const gearSolosUsed = sheet.filter(r => (r.role === 'necklace' || r.role === 'free') && (r.carries || []).some(c => c.kind === 'solo' || (r.source === 'owned' && r.role === 'necklace'))).length;
     const freeCapacity = {
       pairs: Math.max(0, cap.pairSlots - pairSlotsNeeded),
-      gearSolos: Math.max(0, cap.gearSolos - gearSolosUsed),
+      gearSolos: Math.max(0, cap.gearSolos - Math.min(soloKeysAll.length, cap.gearSolos)),
       weaponTree: { major: 1 - (wt.major ? 1 : 0), heroic: 2 - wt.heroic.length, defensive: 2 - wt.defensive.length }
     };
     return {
@@ -361,7 +396,7 @@
       ownedPlans, drops, spares, totals, sheet,
       farmRows: sheet.filter(x => x.source === 'farm').length,
       ownedRows: sheet.filter(x => x.source === 'owned').length,
-      remaining: { pairs: remPairs, solos: remSolos, doubleSoloItems: remSoloPlacement.doubleSoloItems, doubleSoloPairs: remSoloPlacement.doubleSoloPairs }
+      remaining: { pairs: remPairs, solos: remSolosList.slice(), doubleSoloItems: leftoverDS.doubleSoloItems, doubleSoloPairs: leftoverDS.doubleSoloPairs }
     };
   }
 
