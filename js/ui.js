@@ -525,14 +525,19 @@
       out.appendChild(box);
     }
 
-    // notes: double-solo + souldust shortage
+    // notes: natural drops + souldust shortage
     const notes = [];
-    if (r.remaining.doubleSoloItems) notes.push(el('div', { class: 'assume', style: 'margin-bottom:8px' }, [
-      el('b', {}, ['⚑ ' + r.remaining.doubleSoloItems + ' natural 2-type drop(s) needed. ']),
-      'More solo mods than solo slots — you can’t build two different mod-types on one fixed-first item (upgrading duplicates the type). Drop a naturally-Regal set/weapon/relic that already carries two different types: ',
-      ...r.remaining.doubleSoloPairs.map(pr => el('span', { class: 'pill' }, [
-        pr[0] ? catTag(pr[0].category) : el('span', {}, ['?']), ' + ',
-        pr[1] ? catTag(pr[1].category) : el('span', { class: 'mini' }, ['any other'])]))]));
+    const drops = r.remaining.doubleSoloDrops || (r.remaining.doubleSoloPairs || []).map(p => ({ mods: p, hard: false }));
+    if (drops.length) {
+      const note = el('div', { class: 'assume', style: 'margin-bottom:8px' }, [
+        el('b', {}, ['⚑ ' + drops.length + ' natural drop(s) needed. ']),
+        'More solo mods than solo slots — you can’t build two different mods onto one fixed-first item (upgrading duplicates, and re-rolling a category re-rolls all its slots). So farm a naturally-Regal item that already carries: ']);
+      drops.forEach(d => note.appendChild(el('span', { class: 'pill', style: d.hard ? 'border-color:var(--warn)' : '' }, [
+        d.mods[0] ? catTag(d.mods[0].category, d.mods[0].name) : el('span', {}, ['?']), ' + ',
+        d.mods[1] ? catTag(d.mods[1].category, d.mods[1].name) : el('span', { class: 'mini' }, ['any other type']),
+        d.hard ? el('span', { class: 'mini', style: 'color:var(--warn)' }, [' — exact drop (can’t craft)']) : ''])));
+      notes.push(note);
+    }
     if (r.souldustOwned < r.souldustNeed) notes.push(el('div', { class: 'assume' }, [
       el('b', {}, ['Souldust: ']), `this plan may need up to ${r.souldustNeed} Legendary Souldust for free-item 3rd mods, but you have ${r.souldustOwned}. ` +
       'Farm more, or rely on lucky 3rd-mod rolls and re-attempts.']));

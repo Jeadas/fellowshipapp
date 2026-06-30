@@ -101,13 +101,26 @@
     const byCat = {};
     solos.forEach(s => (byCat[s.category] = byCat[s.category] || []).push(s));
     const cats = Object.keys(byCat);
-    const pairsOut = []; let guard = 0;
-    while (cats.some(c => byCat[c].length) && guard++ < 200) {
+    const drops = []; let guard = 0;
+    // 1) pair across DIFFERENT categories first — these are "dial-able": each
+    //    slot re-rolls within its own category, so you only need the right two
+    //    categories to drop, then craft the exact mods.
+    while (guard++ < 500) {
       const avail = cats.filter(c => byCat[c].length).sort((a, b) => byCat[b].length - byCat[a].length);
-      if (avail.length >= 2) pairsOut.push([byCat[avail[0]].pop(), byCat[avail[1]].pop()]);
-      else pairsOut.push([byCat[avail[0]].pop(), null]);
+      if (avail.length < 2) break;
+      drops.push({ mods: [byCat[avail[0]].pop(), byCat[avail[1]].pop()], hard: false });
     }
-    return { doubleSoloItems: pairsOut.length, doubleSoloPairs: pairsOut };
+    // 2) whatever is left is all ONE category. Two different mods of the same
+    //    category on one item is valid but can't be crafted (re-rolling that
+    //    category re-rolls both slots) — it must DROP that exact pair. A lone
+    //    leftover takes a slot with a filler 2nd mod (still dial-able).
+    const last = cats.find(c => byCat[c].length);
+    if (last) {
+      const arr = byCat[last];
+      while (arr.length >= 2) drops.push({ mods: [arr.pop(), arr.pop()], hard: true });
+      if (arr.length) drops.push({ mods: [arr.pop(), null], hard: false });
+    }
+    return { doubleSoloItems: drops.length, doubleSoloPairs: drops.map(d => d.mods), drops };
   }
   function placeSolos(soloKeys, cap) {
     const solos = soloKeys.map(k => { const [category, name] = split(k); return { category, name }; });
@@ -408,7 +421,7 @@
       ownedPlans, drops, spares, totals, sheet,
       farmRows: sheet.filter(x => x.source === 'farm').length,
       ownedRows: sheet.filter(x => x.source === 'owned').length,
-      remaining: { pairs: remPairs, solos: remSolosList.slice(), doubleSoloItems: leftoverDS.doubleSoloItems, doubleSoloPairs: leftoverDS.doubleSoloPairs }
+      remaining: { pairs: remPairs, solos: remSolosList.slice(), doubleSoloItems: leftoverDS.doubleSoloItems, doubleSoloPairs: leftoverDS.doubleSoloPairs, doubleSoloDrops: leftoverDS.drops }
     };
   }
 
