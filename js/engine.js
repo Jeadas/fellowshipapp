@@ -199,6 +199,17 @@
     return true;
   }
 
+  // Physically interchangeable slots share a "group": you can only WEAR as many
+  // items of a group as there are worn slots in it (2 relics, 2 rings, 1 of
+  // every other). Owned items beyond that are interchangeable CHOICES, not extra
+  // worn pieces — surfaced so the user sees "either this relic OR that one".
+  function slotGroup(slot) {
+    if (slot === 'Relic1' || slot === 'Relic2') return 'relic';
+    if (slot === 'Ring1' || slot === 'Ring2') return 'ring';
+    return slot;
+  }
+  const GROUP_LABEL = { relic: 'Relic', ring: 'Ring' };
+
   function assess(state, loadout, demand, cap) {
     // mutable demand pools
     const pairPool = {};  Object.keys(demand.pairs).forEach(k => (pairPool[k] = demand.pairs[k]));
@@ -206,14 +217,58 @@
     const catPairKeys = c => Object.keys(pairPool).filter(k => split(k)[0] === c && pairPool[k] > 0);
     const catSoloKeys = c => Object.keys(soloPool).filter(k => split(k)[0] === c && soloPool[k] > 0);
 
+    // per-group wear capacity (2 relics / 2 rings / 1 each other worn slot).
+    const groupCap = {};
+    G.SLOTS.forEach(slot => { if (roleOf(loadout, slot) === 'legendary') return; const g = slotGroup(slot); groupCap[g] = (groupCap[g] || 0) + 1; });
+    const usedByGroup = {};
+    const groupFull = g => (usedByGroup[g] || 0) >= (groupCap[g] || 1);
+    const bumpGroup = g => (usedByGroup[g] = (usedByGroup[g] || 0) + 1);
+
+    const usedItem = new Set();
+    const altItems = new Map();       // idx -> {item, role, group}  (interchangeable extras)
+    const plans = [];
+
+    // ---- PRE-PASS: free items that dropped carrying TWO DIFFERENT categories
+    // in slots 1-2. Flooding a pair there would overwrite one category, so they
+    // can't be a pair — use them as two independent SINGLES (one per category).
+    // Each single fills a leftover SOLO of its category (keeping the pair/solo
+    // parity of the build), preferring to keep a mod the build already wants;
+    // otherwise it's re-rolled within its own category to a needed single. This
+    // is souldust-free (slots 1-2, never the random 3rd slot).
+    (state.inventory || []).forEach((item, idx) => {
+      const role = roleOf(loadout, item.slot);
+      if (role !== 'free' || !setMatches(item, loadout, item.slot, role)) return;
+      const m0 = item.mods[0], m1 = item.mods[1];
+      if (!(m0 && m1 && m0.category !== m1.category)) return;   // only genuine 2-type free items
+      const g = slotGroup(item.slot);
+      if (groupFull(g)) { if (!altItems.has(idx)) altItems.set(idx, { item, role, group: g }); return; }
+      const contributes = [], steps = []; let marks = 0;
+      item.mods.slice(0, 2).forEach((m, i) => {
+        // keep the mod if the build wants it as a solo, else re-roll within its
+        // category to whatever solo of that category is still needed.
+        const key = catSoloKeys(m.category).find(k => split(k)[1] === m.name) || catSoloKeys(m.category)[0];
+        if (!key) return;                              // this category needs no single — leave slot flexible
+        soloPool[key]--;
+        const [cat, name] = split(key);
+        if (m.name === name) steps.push(step(`✓ slot ${i + 1} already ${name}`));
+        else { steps.push(step(`Reroll ${lbl(cat)} → ${name} (≈${G.POOL_SIZE[cat]} rolls)`, marksToHitName(cat))); marks += marksToHitName(cat); }
+        contributes.push({ category: cat, name });
+      });
+      if (!contributes.length) return;                 // matched nothing -> handled by the drop loop below
+      usedItem.add(idx); bumpGroup(g);
+      plans.push({ slot: item.slot, role: 'free', use: 'free-distinct', item, contributes, steps, marks, souldust: 0, done: steps.every(s => s.text.startsWith('✓')) });
+    });
+
     // candidate matches: {item, kind, key(s), cost}
     const cands = [];
     (state.inventory || []).forEach((item, idx) => {
+      if (usedItem.has(idx)) return;                             // already placed by the pre-pass
       const role = roleOf(loadout, item.slot);
       if (!setMatches(item, loadout, item.slot, role)) return;   // wrong set for this loadout
       const m0 = item.mods[0], m1 = item.mods[1];
       if (role === 'free') {
         if (!m0) return;                              // need 1st mod to know its category
+        if (m1 && m1.category !== m0.category) return;   // 2-type free item -> pre-pass / drop, never a forced pair
         catPairKeys(m0.category).forEach(key => {
           const [, name] = split(key);
           const cost = (m0.name === name ? 0 : marksToHitName(m0.category)) + (Rx(item.rarity) < Rx('Epic') ? G.COST.upgradeRarity * (Rx('Epic') - Rx(item.rarity)) : 0);
@@ -244,13 +299,15 @@
     });
 
     cands.sort((a, b) => a.cost - b.cost);
-    const usedItem = new Set();
-    const plans = [];
     cands.forEach(c => {
       if (usedItem.has(c.idx)) return;
+      const g = slotGroup(c.item.slot);
+      // group already full -> this owned item is an interchangeable CHOICE, not
+      // worn. Do NOT consume its demand: another slot covers it instead.
+      if (groupFull(g)) { if (!altItems.has(c.idx)) altItems.set(c.idx, { item: c.item, role: c.role, group: g }); return; }
       if (c.kind === 'double-solo') {
         if (!(soloPool[c.key] > 0 && soloPool[c.key2] > 0)) return;
-        soloPool[c.key]--; soloPool[c.key2]--; usedItem.add(c.idx);
+        soloPool[c.key]--; soloPool[c.key2]--; usedItem.add(c.idx); bumpGroup(g);
         const [cat2, n2] = split(c.key), [cat3, n3] = split(c.key2);
         const steps = [];
         const a0 = c.item.mods[0], a1 = c.item.mods[1];
@@ -264,7 +321,7 @@
       const [cat, name] = split(c.key);
       if (c.kind === 'free-pair') {
         if (!(pairPool[c.key] > 0)) return;
-        pairPool[c.key]--; usedItem.add(c.idx);
+        pairPool[c.key]--; usedItem.add(c.idx); bumpGroup(g);
         const r = pairSteps(c.item, 'free', cat, name, 'Epic');
         const contributes = [{ category: cat, name }, { category: cat, name }];
         // This free item's 3rd slot may host a remaining solo — but only if it
@@ -288,23 +345,32 @@
       }
       if (c.kind === 'pair') {
         if (!(pairPool[c.key] > 0)) return;
-        pairPool[c.key]--; usedItem.add(c.idx);
+        pairPool[c.key]--; usedItem.add(c.idx); bumpGroup(g);
         const r = pairSteps(c.item, c.role, cat, name, 'Regal');
         plans.push({ slot: c.item.slot, role: c.role, use: 'pair', item: c.item, contributes: [{ category: cat, name }, { category: cat, name }], steps: r.steps, marks: r.marks, souldust: 0, done: r.done });
         return;
       }
       if (c.kind === 'neck-solo') {
         if (!(soloPool[c.key] > 0)) return;
-        soloPool[c.key]--; usedItem.add(c.idx);
+        soloPool[c.key]--; usedItem.add(c.idx); bumpGroup(g);
         const r = necklaceSoloSteps(c.item, cat, name);
         plans.push({ slot: c.item.slot, role: c.role, use: 'solo', item: c.item, contributes: [{ category: cat, name }], steps: r.steps, marks: r.marks, souldust: 0, done: r.done });
         return;
       }
     });
 
+    // interchangeable extras: owned items that fit a group already at capacity.
+    // They aren't worn (a cheaper item took the slot) but the user should see
+    // them as a real choice — "wear this relic instead of that one".
+    const alternatives = [];
+    altItems.forEach((info, idx) => {
+      if (usedItem.has(idx)) return;
+      alternatives.push({ slot: info.item.slot, role: info.role, group: info.group, item: info.item, mods: (info.item.mods || []).slice() });
+    });
+
     // owned items that matched nothing -> drop / re-attempt
     (state.inventory || []).forEach((item, idx) => {
-      if (usedItem.has(idx)) return;
+      if (usedItem.has(idx) || altItems.has(idx)) return;     // used, or shown as a choice
       const role = roleOf(loadout, item.slot);
       const m0 = item.mods[0];
       const where = role === 'free' ? '1st mod' : (item.slot === 'Necklace' ? '3rd mod' : '2nd slot');
@@ -323,7 +389,7 @@
       plans.push({ slot: item.slot, role, use: 'drop', item, contributes: [], steps: [], marks: 0, souldust: 0, dropReason });
     });
 
-    return { plans, pairPool, soloPool };
+    return { plans, pairPool, soloPool, alternatives, groupCap };
   }
 
   /* ---------- top-level solve ------------------------------------ */
@@ -335,7 +401,7 @@
     const soloKeysAll = []; Object.keys(demand.solos).forEach(k => { for (let i = 0; i < demand.solos[k]; i++) soloKeysAll.push(k); });
     const soloPlacement = placeSolos(soloKeysAll, cap);   // rough estimate (refined below from the real sheet)
 
-    const { plans, pairPool, soloPool } = assess(state, loadout, demand, cap);
+    const { plans, pairPool, soloPool, alternatives, groupCap } = assess(state, loadout, demand, cap);
 
     // remaining demand after owned items
     const remPairs = Object.keys(pairPool).filter(k => pairPool[k] > 0).map(k => { const [category, name] = split(k); return { category, name, count: pairPool[k] }; });
@@ -343,7 +409,19 @@
 
     const ownedPlans = plans.filter(p => p.use !== 'drop');
     const drops = plans.filter(p => p.use === 'drop');
-    const totals = ownedPlans.reduce((t, p) => ({ marks: t.marks + p.marks, souldust: t.souldust + p.souldust }), { marks: 0, souldust: 0 });
+
+    // interchangeable-choice groups: for each group that has extra owned items,
+    // show the ones being worn next to the alternatives you could swap in.
+    const choices = [];
+    if (alternatives && alternatives.length) {
+      const byGroup = {};
+      alternatives.forEach(a => (byGroup[a.group] = byGroup[a.group] || []).push(a));
+      Object.keys(byGroup).forEach(g => {
+        const used = ownedPlans.filter(p => slotGroup(p.slot) === g)
+          .map(p => ({ slot: p.slot, mods: (p.item.mods || []).slice(), contributes: p.contributes, done: p.done, marks: p.marks }));
+        choices.push({ group: g, label: GROUP_LABEL[g] || g, cap: (groupCap && groupCap[g]) || used.length, used, alternatives: byGroup[g] });
+      });
+    }
 
     const souldustOwned = (state.settings && state.settings.souldustOwned) || 0;
     const necklaceSolo = cap.necklace ? 1 : 0;
@@ -402,6 +480,32 @@
 
     const sheet = [...rowsNeck, ...rowsFree, ...rowsPair.weapon, ...rowsPair.relic, ...rowsPair.set];
 
+    // --- use each free item's random 3rd slot for a leftover solo ---
+    // Every free item has a 3rd slot that holds one single (the souldust
+    // target). Farm free rows already picked one up above; owned free rows had
+    // their slots 1-2 solved in `assess`, so their 3rd slot is still open — fill
+    // it here (otherwise that real solo capacity is wasted for stash pieces).
+    sheet.forEach(row => {
+      if (row.role !== 'free' || !remSolosList.length) return;
+      const carries = row.carries || [];
+      const has3 = row.source === 'owned'
+        ? (row.plan.contributes || []).length >= 3
+        : carries.some(c => c.kind === 'solo');
+      if (has3) return;
+      const s = remSolosList.shift();
+      if (row.source === 'owned') {
+        const it = row.plan.item;
+        const fs = freeSoloSteps(it, s.category, s.name, Rx(it.rarity) >= Rx('Regal'));
+        fs.steps.forEach(st => row.plan.steps.push(st));
+        row.plan.marks += fs.marks; row.plan.souldust += fs.souldust;
+        row.plan.contributes = (row.plan.contributes || []).concat([{ category: s.category, name: s.name }]);
+        row.plan.done = row.plan.steps.every(st => st.text.startsWith('✓'));
+        row.carries = row.plan.contributes;
+      } else {
+        row.carries = carries.concat([{ category: s.category, name: s.name, kind: 'solo' }]);
+      }
+    });
+
     // --- place leftover solos onto the spare (filler) fixed-first slots ---
     // A fixed-first slot pair holds TWO mods of the SAME category (slot 3 dups
     // slot 2 and re-rolls within that category). So per spare item:
@@ -453,11 +557,12 @@
       weaponTree: { major: 1 - (wt.major ? 1 : 0), heroic: 2 - wt.heroic.length, defensive: 2 - wt.defensive.length }
     };
     const toMod = a => a && { category: a.category, name: a.name };
+    const totals = ownedPlans.reduce((t, p) => ({ marks: t.marks + p.marks, souldust: t.souldust + p.souldust }), { marks: 0, souldust: 0 });
     return {
       feasible, issues, weaponTree: wt, capacity: cap, loadout, freeCapacity,
       demand: { pairs: demand.pairs, solos: demand.solos, pairTotal, soloTotal: soloKeysAll.length },
       soloPlacement, pairSlotsNeeded, souldustOwned, souldustNeed,
-      ownedPlans, drops, spares, totals, sheet,
+      ownedPlans, drops, spares, totals, sheet, alternatives: alternatives || [], choices,
       farmRows: sheet.filter(x => x.source === 'farm').length,
       ownedRows: sheet.filter(x => x.source === 'owned').length,
       naturalDrops: naturalDrops.map(p => p.map(toMod)),

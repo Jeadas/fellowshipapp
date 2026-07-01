@@ -521,6 +521,34 @@
       sheetTbl
     ]));
 
+    // interchangeable choices — you own more of a slot type than fit
+    if (r.choices && r.choices.length) {
+      const box = el('div', { class: 'panel' }, [el('h2', {}, ['Interchangeable choices — you have options']),
+        el('p', { class: 'hint' }, ['You own more items than there are slots for these, so they’re interchangeable — pick whichever you prefer. The plan uses the cheapest to finish; swapping an alternative in just means benching one of the ones in use (not building all of them).'])]);
+      r.choices.forEach(c => {
+        const wrap = el('div', { class: 'assume', style: 'margin-top:8px' });
+        wrap.appendChild(el('div', {}, [el('b', {}, [c.label + ' — ' + c.cap + ' slot' + (c.cap > 1 ? 's' : '') + ', ' + (c.used.length + c.alternatives.length) + ' of your items fit here']) ]));
+        const useRow = el('div', { class: 'kv', style: 'margin-top:6px' }, [el('span', { class: 'mini' }, ['In the plan: '])]);
+        c.used.forEach(u => {
+          const pill = el('span', { class: 'pill' }, [el('b', {}, [u.slot]), ' ']);
+          (u.contributes || []).forEach(x => pill.appendChild(catTag(x.category, x.name)));
+          pill.appendChild(el('span', { class: 'mini' }, [u.done ? ' ✓ done' : ' ≈' + u.marks + 'm']));
+          useRow.appendChild(pill);
+        });
+        wrap.appendChild(useRow);
+        const altRow = el('div', { class: 'kv', style: 'margin-top:4px' }, [el('span', { class: 'mini' }, ['Or slot instead: '])]);
+        c.alternatives.forEach(a => {
+          const pill = el('span', { class: 'pill', style: 'border-style:dashed' }, [el('b', {}, [a.slot]), el('span', { class: 'mini' }, [' (' + a.item.rarity + ') '])]);
+          if (a.mods && a.mods.length) a.mods.forEach(m => pill.appendChild(catTag(m.category, m.name)));
+          else pill.appendChild(el('span', { class: 'mini' }, ['no mods entered']));
+          altRow.appendChild(pill);
+        });
+        wrap.appendChild(altRow);
+        box.appendChild(wrap);
+      });
+      out.appendChild(box);
+    }
+
     // crafting steps for owned items
     if (r.ownedPlans.length) {
       const ownBox = el('div', { class: 'panel' }, [el('h2', {}, ['Crafting steps for items you own'])]);
